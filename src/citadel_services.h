@@ -13,10 +13,10 @@
 namespace bastion::services {
 // Registered SDK callbacks are C boundaries. Even a throwing host callback or
 // a failed allocation must become a failed UI call rather than unwind through Lua.
-template <class Callback> int guarded_ui(const PluginHostApi *host, Callback &&callback) noexcept {
-    const auto log = [host](const char *message) noexcept {
+template <class Callback> int guarded_ui(const PluginHostApi *api, Callback &&callback) noexcept {
+    const auto log = [api](const char *message) noexcept {
         try {
-            if (HAILSTONE_HOST_HAS(host, log)) host->log(host->host, 3, message);
+            if (HAILSTONE_HOST_HAS(api, log)) api->log(api->host, 3, message);
         } catch (...) {
             // Error reporting must not reopen the exception boundary.
         }
@@ -70,29 +70,29 @@ struct Context {
     std::string name;
     bool operator==(const Context &) const = default;
 };
-inline std::optional<Context> context(const PluginHostApi *host, bool selected, bool in_game) {
-    if (!selected || !in_game || !HAILSTONE_HOST_HAS(host, get_player) || !HAILSTONE_HOST_HAS(host, get_spawn) ||
-        !HAILSTONE_HOST_HAS(host, monotonic_ms) || !HAILSTONE_HOST_HAS(host, send_packet))
+inline std::optional<Context> context(const PluginHostApi *api, bool selected, bool in_game) {
+    if (!selected || !in_game || !HAILSTONE_HOST_HAS(api, get_player) || !HAILSTONE_HOST_HAS(api, get_spawn) ||
+        !HAILSTONE_HOST_HAS(api, monotonic_ms) || !HAILSTONE_HOST_HAS(api, send_packet))
         return std::nullopt;
     HailstonePlayer player{};
     player.size = sizeof(player);
-    if (!host->get_player(host->host, &player) ||
+    if (!api->get_player(api->host, &player) ||
         player.size < offsetof(HailstonePlayer, in_zone) + sizeof(player.in_zone) || !player.in_zone ||
         !player.spawn_id)
         return std::nullopt;
     HailstoneSpawn spawn{};
     spawn.size = sizeof(spawn);
-    if (!host->get_spawn(host->host, player.spawn_id, &spawn) ||
+    if (!api->get_spawn(api->host, player.spawn_id, &spawn) ||
         spawn.size < offsetof(HailstoneSpawn, incarnation) + sizeof(spawn.incarnation) || !spawn.incarnation)
         return std::nullopt;
     return Context{player.spawn_id, player.zone_id, spawn.incarnation, bounded(player.name)};
 }
-inline std::optional<std::string> argument(const PluginHostApi *host, const HailstoneArgs *args, std::size_t index,
+inline std::optional<std::string> argument(const PluginHostApi *api, const HailstoneArgs *args, std::size_t index,
                                            std::size_t maximum = 96) {
-    if (!HAILSTONE_HOST_HAS(host, arg))
+    if (!HAILSTONE_HOST_HAS(api, arg))
         return std::nullopt;
     HailstoneValue value{};
-    if (!host->arg(host->host, args, index, &value) || value.kind != HAILSTONE_STRING || !value.s)
+    if (!api->arg(api->host, args, index, &value) || value.kind != HAILSTONE_STRING || !value.s)
         return std::nullopt;
     std::size_t n = 0;
     while (n <= maximum && value.s[n])
@@ -101,8 +101,8 @@ inline std::optional<std::string> argument(const PluginHostApi *host, const Hail
         return std::nullopt;
     return std::string(value.s, n);
 }
-inline std::optional<std::uint64_t> decimal(const PluginHostApi *host, const HailstoneArgs *args, std::size_t index) {
-    const auto value = argument(host, args, index, 20);
+inline std::optional<std::uint64_t> decimal(const PluginHostApi *api, const HailstoneArgs *args, std::size_t index) {
+    const auto value = argument(api, args, index, 20);
     if (!value || value->empty())
         return std::nullopt;
     std::uint64_t result = 0;

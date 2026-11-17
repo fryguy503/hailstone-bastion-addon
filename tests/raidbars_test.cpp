@@ -24,35 +24,64 @@ Node& next(HailstoneOut& out){
 HailstoneValue text(const char* value){HailstoneValue out{};out.kind=HAILSTONE_STRING;out.s=value;return out;}
 HailstoneValue number(std::int64_t value){HailstoneValue out{};out.kind=HAILSTONE_INT;out.i=value;return out;}
 struct Host {
-    PluginHostApi api{};HailstonePlayer player{};std::vector<HailstoneRaidMember> members;std::map<std::uint32_t,HailstoneSpawn> actors;
-    std::uint64_t revision=9007199254740993ull,owner_incarnation=10;unsigned selected=0,moved=0;std::uint32_t selected_id=0;bool active=true,native_moves=true;std::vector<std::string> commands;
+    PluginHostApi api{};HailstonePlayer player{};std::vector<HS_BulkRaidData> members;std::map<std::uint32_t,HailstoneSpawn> actors;
+    unsigned selected=0,moved=0;std::uint32_t selected_id=0;bool active=true,native_moves=true;std::vector<std::string> commands;
+    std::int32_t last_destination=0;
+    bool truncated_roster=false, extended_record=false;
     std::uint32_t capabilities=HAILSTONE_CAP_READ|HAILSTONE_CAP_CHAT;
     HailstoneUiFn function=nullptr;void* user=nullptr;
     HailstoneUiFn stock_function=nullptr;void* stock_user=nullptr;
     bool accept_stock_function=true;
     bool directory_available=true,server_available=true;
     std::uint64_t context=71;
-    unsigned roster_reads=0,member_reads=0,spawn_reads=0,walk_reads=0,directory_reads=0;
+    unsigned roster_reads=0,spawn_reads=0,walk_reads=0,directory_reads=0;
     std::filesystem::path path=std::filesystem::temp_directory_path()/
         ("hailstone-raidbars-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::path cleanup_root=path;
     Host(){
         std::filesystem::create_directories(path);api.size=sizeof(api);api.host=this;
         api.caps=[](void* h){return static_cast<Host*>(h)->capabilities;};
-        player.size=sizeof(player);player.spawn_id=1;player.in_zone=1;player.game_state=GAMESTATE_INGAME;
+        player.size=sizeof(player);player.spawn_id=1;player.in_zone=1;player.in_raid=1;player.game_state=GAMESTATE_INGAME;
         for(std::uint32_t id=1;id<=3;++id){
-            HailstoneRaidMember member{};member.size=sizeof(member);member.group_id=1;member.class_id=id;member.spawn_id=id==3?0:id;
-            member.incarnation=id==3?0:id*10;member.flags=id==1?HAILSTONE_RAID_LEADER:0;const std::string label=id==1?"Self":id==2?"Healer":"Off-zone member";std::memcpy(member.name,label.c_str(),label.size()+1);members.push_back(member);
+            HS_BulkRaidData member{};
+            member.group=0;member.classID=static_cast<std::int32_t>(id);member.spawnID=id==3?0:id;
+            member.flags=id==1?HS_BULK_RAID_LEADER:0;
+            const std::string label=id==1?"Self":id==2?"Healer":"Off-zone member";
+            std::memcpy(member.name,label.c_str(),label.size()+1);members.push_back(member);
+            if (member.spawnID) {
+                HailstoneSpawn actor{};
+                actor.size=sizeof(actor);actor.id=id;actor.incarnation=id*10;
+                actor.observation_flags=HAILSTONE_SPAWN_HP_KNOWN;
+                std::memcpy(actor.name,label.c_str(),label.size()+1);
+                actors.emplace(id,actor);
+            }
         }
-        HailstoneSpawn actor{};actor.size=sizeof(actor);actor.id=2;actor.incarnation=20;actor.hp_percent=0;
-        actor.observation_flags=HAILSTONE_SPAWN_HP_KNOWN;actors.emplace(2,actor);
         api.get_player=[](void* h,HailstonePlayer* out){*out=static_cast<Host*>(h)->player;return 1;};
-        api.get_raid_roster=[](void* h,HailstoneRaidRoster* out){auto& fixture=*static_cast<Host*>(h);++fixture.roster_reads;if(!fixture.active)return 0;out->size=sizeof(*out);out->revision=fixture.revision;out->owner_incarnation=fixture.owner_incarnation;out->count=static_cast<std::uint32_t>(fixture.members.size());return 1;};
-        api.get_raid_member=[](void* h,std::uint64_t rev,std::uint32_t i,HailstoneRaidMember* out){auto& fixture=*static_cast<Host*>(h);++fixture.member_reads;if(rev!=fixture.revision||i>=fixture.members.size())return 0;*out=fixture.members[i];return 1;};
+        api.get_raid_data_bulk=[](void* h,unsigned char* out,std::int32_t size) -> std::int32_t {
+            auto& fixture=*static_cast<Host*>(h);++fixture.roster_reads;
+            HS_BulkRaidHeader header{};
+            header.size=HS_BULK_RAID_HEADER_SIZE;
+            header.version=1;
+            header.active=fixture.active;
+            header.total=fixture.active?static_cast<std::uint32_t>(fixture.members.size()):0;
+            header.count=fixture.truncated_roster&&header.total?header.total-1:header.total;
+            header.recordSize=HS_BULK_RAID_RECORD_SIZE+(fixture.extended_record?8:0);
+            const auto bytes=static_cast<std::int32_t>(header.size+header.count*header.recordSize);
+            if (size<bytes) return 0;
+            std::memset(out,0,static_cast<std::size_t>(bytes));
+            std::memcpy(out,&header,sizeof(header));
+            for (std::size_t index=0;index<header.count;++index)
+                std::memcpy(out+header.size+index*header.recordSize,&fixture.members[index],sizeof(HS_BulkRaidData));
+            return bytes;
+        };
         api.get_spawn=[](void* h,std::uint32_t id,HailstoneSpawn* out){auto& fixture=*static_cast<Host*>(h);++fixture.spawn_reads;auto& received=fixture.actors;const auto it=received.find(id);if(it==received.end())return 0;*out=it->second;return 1;};
         api.next_spawn=[](void* h,std::uint32_t after,HailstoneSpawn* out){auto& fixture=*static_cast<Host*>(h);++fixture.walk_reads;auto& received=fixture.actors;const auto it=received.upper_bound(after);if(it==received.end())return 0;*out=it->second;return 1;};
-        api.select_raid_member=[](void* h,std::uint64_t rev,std::uint32_t id,std::uint64_t incarnation){auto& fixture=*static_cast<Host*>(h);const auto found=fixture.actors.find(id);if(rev!=fixture.revision||found==fixture.actors.end()||incarnation!=found->second.incarnation)return 0;++fixture.selected;fixture.selected_id=id;fixture.player.target_id=id;return 1;};
-        api.raid_action=[](void* h,std::uint64_t rev,const char*,std::uint32_t action,std::uint32_t group){auto& fixture=*static_cast<Host*>(h);if(rev!=fixture.revision||action!=1||group>12||!fixture.native_moves)return 0;++fixture.moved;return 1;};
+        api.select_raid_member=[](void* h,std::uint32_t id,std::uint64_t incarnation){auto& fixture=*static_cast<Host*>(h);const auto found=fixture.actors.find(id);if(found==fixture.actors.end()||incarnation!=found->second.incarnation)return 0;++fixture.selected;fixture.selected_id=id;fixture.player.target_id=id;return 1;};
+        api.raid_action=[](void* h,const char*,std::uint32_t action,std::int32_t group){
+            auto& fixture=*static_cast<Host*>(h);
+            if(action!=HAILSTONE_RAID_MOVE||group< -1||group>11||!fixture.native_moves)return 0;
+            ++fixture.moved;fixture.last_destination=group;return 1;
+        };
         api.do_command=[](void* h,const char* line){static_cast<Host*>(h)->commands.emplace_back(line);};
         api.add_ui_function=[](void* h,const char* name,HailstoneUiFn fn,void* callback_user){auto& fixture=*static_cast<Host*>(h);
             if(std::string_view(name)=="raidbars"){fixture.function=fn;fixture.user=callback_user;}
@@ -133,11 +162,11 @@ void status_polling(){
         check(state.fields.at("available").integer==1&&state.fields.at("in_raid").integer==1,"light status lost current raid eligibility");
         check(!state.fields.contains("rows")&&!state.fields.contains("roster_members"),"light status serialized a hidden raid snapshot");
     }
-    check(fixture.roster_reads==0&&fixture.member_reads==0&&fixture.spawn_reads==0&&fixture.walk_reads==0,
+    check(fixture.roster_reads==0&&fixture.spawn_reads==0&&fixture.walk_reads==0,
           "hidden status sampled raid members, resources or pets");
     check(fixture.directory_reads==1&&fixture.commands.empty(),"unchanged hidden status repeated directory work or sent commands");
     const auto state=fixture.call({text("state")});
-    check(state.fields.at("roster_members").array.size()==3&&fixture.member_reads==3,"full state did not retrieve current members on demand");
+    check(state.fields.at("roster_members").array.size()==3&&fixture.roster_reads==1,"full state did not retrieve the current roster in one bulk read");
     fixture.player.in_zone=0;
     check(fixture.call({text("status")}).fields.at("available").integer==0,"zoning retained light status admission");
     adapter.peer(false);
@@ -147,7 +176,7 @@ void manager_requests(){
     Host fixture;bastion::raidbars::Adapter adapter;
     adapter.set_host(&fixture.api);adapter.initialize();adapter.peer(true);adapter.game_state(GAMESTATE_INGAME);
     const auto request=[&](const char* action,const char* name=""){
-        const auto revision=std::to_string(fixture.revision);
+        const auto revision=fixture.call({text("state")}).fields.at("roster_revision").text;
         return fixture.call({text("manager"),text(revision.c_str()),text(action),text(name)});
     };
     const auto review=[&]{return fixture.call({text("state")}).fields.at("manager_review");};
@@ -166,8 +195,8 @@ void manager_requests(){
           "review sent a command or rejected a current case-folded character");
     auto pending=review();
     check(pending.fields.at("active").integer==1&&pending.fields.at("name").text=="Healer"&&
-          pending.fields.at("action").text=="add"&&pending.fields.at("roster_revision").text==std::to_string(fixture.revision),
-          "review lost the exact canonical character, action or 64-bit revision");
+          pending.fields.at("action").text=="add"&&pending.fields.at("roster_revision").text==state.fields.at("roster_revision").text,
+          "review lost the exact canonical character, action or roster revision");
     check(request("confirm_add","HEALER").fields.at("ok").integer==1&&fixture.commands.back()=="/say #raidmanager add Healer",
           "confirmed grant did not preserve the current roster's character case");
     sent=fixture.commands.size();
@@ -187,22 +216,22 @@ void manager_requests(){
           "invalid or nonmember target reached a delegation command");
     check(adapter.command("groups off")&&adapter.command("never CLR PAL"),"delegation filter fixture unavailable");
     std::fill(std::begin(fixture.members[2].name),std::end(fixture.members[2].name),'\0');
-    std::memcpy(fixture.members[2].name,"ReLaYn",7);++fixture.revision;
+    std::memcpy(fixture.members[2].name,"ReLaYn",7);
     state=fixture.call({text("state")});
     check(state.fields.at("rows").array.empty()&&state.fields.at("roster_members").array.size()==3,
           "overlay filters removed delegation targets from the full roster");
     check(request("review_add","relayn").fields.at("ok").integer==1&&
           request("confirm_add","ReLaYn").fields.at("ok").integer==1&&fixture.commands.back()=="/say #raidmanager add ReLaYn",
           "filtered off-zone member could not be explicitly delegated with preserved case");
-    sent=fixture.commands.size();request("review_add","Healer");++fixture.revision;
+    sent=fixture.commands.size();request("review_add","Healer");++fixture.members[1].group;
     check(request("confirm_add","Healer").fields.at("ok").integer==0&&fixture.commands.size()==sent,
           "a changed roster retained a grant review");
-    request("review_remove","Healer");++fixture.owner_incarnation;
+    request("review_remove","Healer");++fixture.actors.at(1).incarnation;
     check(request("confirm_remove","Healer").fields.at("ok").integer==0&&fixture.commands.size()==sent,
           "a replacement raid owner retained a delegation review");
     request("review_add","Healer");fixture.members.erase(fixture.members.begin()+1);
     check(request("confirm_add","Healer").fields.at("ok").integer==0&&fixture.commands.size()==sent,
-          "a departed member retained a delegation review even without a new revision");
+          "a departed member retained a delegation review");
     request("review_add","ReLaYn");adapter.begin_zone();
     check(request("confirm_add","ReLaYn").fields.at("ok").integer==0&&fixture.commands.size()==sent,
           "zoning retained a delegation review");
@@ -265,7 +294,7 @@ void stock_manager_requests(){
           "stock confirmation changed Raid Bars management or overlay visibility");
     reviewed=fixture.stock("grant","review","Healer");review_token=reviewed.fields.at("review_token").text;
     check(adapter.command("manage on"),"independent review fixture unavailable");
-    const auto revision=std::to_string(fixture.revision);
+    const auto revision=fixture.call({text("state")}).fields.at("roster_revision").text;
     sent=fixture.commands.size();
     check(fixture.call({text("manager"),text(revision.c_str()),text("confirm_add"),text("Healer")}).fields.at("ok").integer==0&&
           fixture.commands.size()==sent,"a stock review authorized Raid Bars confirmation");
@@ -297,10 +326,10 @@ void stock_manager_requests(){
           fixture.stock("grant","review","Outsider").fields.at("ok").integer==0&&
           fixture.stock("grant","review","Healer","","OtherWindow").fields.at("ok").integer==0&&fixture.commands.size()==sent,
           "stock delegation admitted injection, nonmember or wrong window");
-    reviewed=fixture.stock("grant","review","Healer");review_token=reviewed.fields.at("review_token").text;++fixture.revision;
+    reviewed=fixture.stock("grant","review","Healer");review_token=reviewed.fields.at("review_token").text;++fixture.members[1].group;
     check(fixture.stock("grant","confirm","Healer",review_token.c_str()).fields.at("ok").integer==0&&fixture.commands.size()==sent,
           "stock confirmation crossed a changed raid revision");
-    reviewed=fixture.stock("grant","review","Healer");review_token=reviewed.fields.at("review_token").text;++fixture.owner_incarnation;
+    reviewed=fixture.stock("grant","review","Healer");review_token=reviewed.fields.at("review_token").text;++fixture.actors.at(1).incarnation;
     check(fixture.stock("grant","confirm","Healer",review_token.c_str()).fields.at("ok").integer==0&&fixture.commands.size()==sent,
           "stock confirmation crossed a changed raid owner");
     reviewed=fixture.stock("grant","review","Healer");review_token=reviewed.fields.at("review_token").text;fixture.capabilities&=~HAILSTONE_CAP_CHAT;
@@ -339,7 +368,7 @@ int main(){try{
     config.set("show_all",1);config.set("never",2);check(visible_rows(rows,config).empty(),"never-class filter lost priority over show-all");
     config.set("group_sort",1);check(visible_rows(rows,config).size()==3,"default group mode did not preserve a complete roster");
     config.set("filter_groups",1);check(visible_rows(rows,config).empty(),"explicit group filters ignored");
-    config=Settings{};rows[0].flags=HAILSTONE_RAID_GROUP_LEADER;rows[0].class_id=16;rows[0].name="Leader";
+    config=Settings{};rows[0].flags=HS_BULK_RAID_GROUP_LEADER;rows[0].class_id=16;rows[0].name="Leader";
     check(visible_rows(rows,config).front().name=="Leader","group leader was not placed first");
     Host fixture;Adapter adapter;adapter.set_host(&fixture.api);adapter.initialize();adapter.peer(true);adapter.game_state(GAMESTATE_INGAME);
     auto state=fixture.call({text("state")});auto& observed=state.fields["rows"].array;
@@ -352,7 +381,11 @@ int main(){try{
     const auto unknown=std::find_if(observed.begin(),observed.end(),[](const Node& row){return row.fields.at("name").text=="Off-zone member";});
     check(known!=observed.end()&&known->fields.at("health_known").integer==1&&known->fields.at("health").integer==0,"known zero was lost");
     check(unknown!=observed.end()&&unknown->fields.at("health_known").integer==0&&unknown->fields.at("incarnation").text=="0","off-zone health became known zero");
-    const auto revision=state.fields["roster_revision"].text;
+    auto revision=state.fields["roster_revision"].text;
+    fixture.extended_record=true;
+    fixture.actors.at(2).hp_percent=50;
+    check(fixture.call({text("state")}).fields.at("roster_revision").text==revision,
+          "an extended record or health update unnecessarily changed the roster identity");
     adapter.pulse();check(fixture.selected==0,"pulse selected a raid actor");
     check(fixture.call({text("select"),text(revision.c_str()),number(2),text("20")}).fields["ok"].integer==1&&fixture.selected==1,"current explicit selection failed");
     HailstoneSpawn pet{};pet.size=sizeof(pet);pet.id=8;pet.owner_id=2;pet.incarnation=80;pet.hp_percent=75;pet.observation_flags=HAILSTONE_SPAWN_HP_KNOWN;std::memcpy(pet.name,"Companion",10);fixture.actors.emplace(8,pet);
@@ -363,17 +396,27 @@ int main(){try{
     const auto owner=std::find_if(separate.begin(),separate.end(),[](const Node& row){return row.fields.at("name").text=="Healer";});
     check(owner!=separate.end()&&std::next(owner)!=separate.end()&&std::next(owner)->fields.at("pet").integer==1,"separate pet was not adjacent to owner");
     check(adapter.command("manage on"),"management compatibility command failed");
-    check(fixture.call({text("action"),text(revision.c_str()),text("Healer"),number(1),number(2)}).fields["ok"].integer==1&&fixture.moved==1,"explicit native subgroup move failed");
+    check(fixture.call({text("action"),text(revision.c_str()),text("Healer"),number(1),number(2)}).fields["ok"].integer==1&&fixture.moved==1&&fixture.last_destination==1,"explicit native subgroup move failed or used the wrong zero-based group");
     check(fixture.call({text("action"),text(revision.c_str()),text("Healer"),number(2),number(1)}).fields["ok"].integer==1&&fixture.commands==std::vector<std::string>{"/say #raidpromote Healer"},"promotion request did not preserve validated Bastion command");
     fixture.members[0].flags=0;
+    revision=fixture.call({text("state")}).fields.at("roster_revision").text;
     check(fixture.call({text("action"),text(revision.c_str()),text("Healer"),number(2),number(1)}).fields["ok"].integer==1&&fixture.commands.size()==2,"delegated promotion request was blocked by an invented local permission");
     fixture.native_moves=false;
     check(fixture.call({text("action"),text(revision.c_str()),text("Healer"),number(1),number(2)}).fields["ok"].integer==1&&fixture.commands.back()=="/say #raidmove Healer 2","delegated move did not fall back to Bastion's explicit server request");
     const auto requested=fixture.commands.size();
     check(fixture.call({text("action"),text(revision.c_str()),text("Healer\n/say injected"),number(1),number(2)}).fields["ok"].integer==0&&fixture.commands.size()==requested,"nonmember or command injection reached the server request");
-    ++fixture.revision;fixture.actors.at(2).incarnation=21;fixture.members[1].incarnation=21;
+    fixture.actors.at(2).incarnation=21;
     check(fixture.call({text("select"),text(revision.c_str()),number(2),text("20")}).fields["ok"].integer==0&&fixture.selected==2,"stale roster/actor selected replacement");
     check(fixture.call({text("action"),text(revision.c_str()),text("Healer"),number(1),number(2)}).fields["ok"].integer==0&&fixture.moved==1,"stale roster moved replacement");
+    revision=fixture.call({text("state")}).fields.at("roster_revision").text;
+    fixture.native_moves=true;
+    check(fixture.call({text("action"),text(revision.c_str()),text("Healer"),number(1),number(0)}).fields.at("ok").integer==1&&
+          fixture.last_destination== -1,"moving out of all groups used the wrong native destination");
+    fixture.truncated_roster=true;
+    check(fixture.call({text("state")}).fields.at("available").integer==0,"incomplete bulk roster was treated as complete");
+    fixture.truncated_roster=false;
+    check(fixture.call({text("state")}).fields.at("roster_revision").text!=revision,
+          "a formerly incomplete roster revived an old revision");
     fixture.active=false;
     check(fixture.call({text("state")}).fields["available"].integer==1,"out-of-raid settings unavailable");
     check(adapter.command("grid 6 3")&&adapter.command("position 40 60 800 600")&&adapter.command("always WAR CLR")&&adapter.command("threshold 45")&&adapter.command("clickthrough toggle"),"legacy layout/filter commands failed outside raid");

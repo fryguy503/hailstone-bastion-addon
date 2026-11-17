@@ -4,12 +4,9 @@ A standalone Bastion addon with native Hailstone Lua windows for Modern and Game
 Open **`/bastion`** for tools, character settings, and the searchable server command catalog.
 `/citadel` and `/cit` remain compatible aliases.
 
-This preview requires the Hailstone **server addon services** client update developed alongside it,
-combined with the modular UI API's owned extension hooks for the stock Raid controls.
-It also requires the companion map-ownership update to suppress conflicting stock NPC features.
-The map-local filter panel uses `hs.UI` 1.5 and its stock group-marker visibility fix.
-Use a matching canonical client/addon pair. An older host refuses the new DLL before the addon initializes;
-a compatible host missing required services leaves its features inactive. The addon uses only public SDK headers.
+Preview 3 targets upstream Hailstone `6446875a`, including its public server add-on services,
+modular UI extensions and map ownership. The map-local filter panel uses `hs.UI` 1.5.
+Hailstone builds missing those services can load the addon with its Bastion features inactive.
 
 ## Included
 
@@ -72,8 +69,9 @@ not execute it. The server determines whether a submitted command is permitted.
 
 Settings are kept in Hailstone's own per-server/per-character plugin directories. Faction exports
 go into the addon's `exports` directory. Nothing writes to the player's game asset folder.
-Install or start the addon before the world login so it can observe the server announcement;
-a manual mid-zone reload needs a new world login to activate.
+Start the addon before world login to receive the server announcement and any early protocol messages.
+If it first loads at zone-in or is reloaded in a zone, it can also activate for Bastion - Production
+through the official Bastion login server.
 
 The stock Raid controls use `hs.UI.extensions` in both UI packs. They list managers or prepare a
 grant/revoke request for the selected character, including members in another zone. Opening or drawing
@@ -83,32 +81,29 @@ in chat; client leadership flags are not treated as proof of permission.
 ## Build and validate
 
 ```
-cmake -S . -B build -DHAILSTONE_SDK_DIR=/path/to/patched/hailstone/sdk
+cmake -S . -B build -DHAILSTONE_SDK_DIR=/path/to/hailstone/sdk
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
 Lua 5.4 enables the two-pack UI regression tests. With GCC/Clang, add `-DBASTION_SANITIZE=ON`
 for address and undefined-behavior checks, or run `tools/test-sanitizers.sh /path/to/sdk`.
-The checked-in SDK is an MIT-licensed snapshot for standalone builds; the host still needs the update.
-It uses Canonical 2 ABI 3 layout `0xe7faba7b569803ce` with 106 host-table members. The DLL negotiates that
-layout through versioned exports and has no legacy host setter. A marked Canonical 1 DLL uses the client's typed prior-layout view. An experimental unmarked preview DLL
-requires an explicit exact-SHA256 `ui-preview-1` override; rebuilding with this SDK is preferred.
+The checked-in SDK is an MIT-licensed snapshot for standalone builds. The DLL uses the current public ABI 3
+entry points defined by `HAILSTONE_PLUGIN`. Optional host services are checked before use.
 See [SDK provenance and compatibility](sdk/README.md).
 The full UI suite also reads Hailstone's native pack helpers. Providing the companion SDK above
 detects them automatically; with the bundled SDK, set `-DHAILSTONE_CLIENT_UI_ROOT=/path/to/hailstone`
 to enable those integration tests. SDK-only builds retain the C++ and isolated Lua tests.
 
-Package with the patched client's `tools/make_addon.py`; `tools/package.py` stages only the plugin,
+Package with Hailstone's `tools/make_addon.py`. `tools/package.py` stages the plugin,
 Lua windows, license and documentation. Build output and signing keys do not belong in source control.
 
 ## Acceptance limits
 
-Source and automated checks are separate from live server acceptance. Native admission needs the
-matching CIT1 version 3 server change and approval of the exact executable/addon pair. Those changes
-are prepared for review and require deployment and ordinary-account login acceptance. Raidwide mana/endurance can only be shown when the server supplies them;
-unknown observations are never invented. Legacy subgroup promotion is requested through the existing
-Bastion command, whose deployed handler still needs confirmation.
+Live acceptance requires an ordinary-account login. Servers enforcing CIT1 version 3 native integrity
+must approve the exact executable and addon pair. Raidwide mana and endurance remain unavailable when
+the server does not supply them. Legacy subgroup promotion uses the existing Bastion command, whose
+deployed handler still needs confirmation.
 
 Map filtering is client presentation policy. Other scripts can still read spawn data that the
 server has sent; this is not a server-side anti-cheat boundary. This port intentionally closes
@@ -121,6 +116,4 @@ player/group navigation remain available. Other servers recover the saved stock 
 Live encounters, slopes/lifts, 72-member raids, roster churn, pet equipment, merchant inventory
 updates, home-city grants, Firefell transfers and physical controller use remain acceptance work.
 No release or deployment is implied by a successful local build.
-The canonical SDK migration is validated against the matching client on Windows and Linux. Fresh
-review-only integrity approval identifies the new executable/addon pair. Earlier C5 validation and archives
-describe the preserved previous pair.
+The validation report identifies the addon and client versions used for each test.

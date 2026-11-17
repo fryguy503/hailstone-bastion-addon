@@ -1,5 +1,10 @@
 # Changes
 
+## 0.1.0-preview.3
+
+- Build with upstream Hailstone `6446875a` and use its standard native plugin entry points.
+- Read raid and map roster data through the public bulk raid API and use upstream's raid targeting and move calls.
+
 ## 0.1.0-preview.2
 
 - Removed repeated raid-member enumeration from map filtering while retaining fresh roster and actor checks.

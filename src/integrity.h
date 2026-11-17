@@ -8,7 +8,7 @@ namespace bastion::integrity {
 inline constexpr std::uint16_t opcode=0x7d1a;
 inline constexpr std::uint32_t magic=0x43495431,version=3;
 inline constexpr std::uint64_t features=0x3fff,challenge_ttl_ms=60000,ack_timeout_ms=10000;
-inline constexpr std::string_view addon_version="0.1.0-preview.2";
+inline constexpr std::string_view addon_version="0.1.0-preview.3";
 enum class Status { Inactive,Waiting,Measuring,Queued,Sending,Sent,Accepted,Rejected,Unsupported,Malformed,TimedOut,Failed };
 const char* label(Status);
 class Adapter {

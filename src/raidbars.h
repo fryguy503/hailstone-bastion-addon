@@ -46,10 +46,15 @@ public:
     void pulse() {}
     bool command(std::string_view args);
 private:
-    bool sample(HailstoneRaidRoster& roster, std::vector<Row>& rows);
+    struct RosterState {
+        std::uint64_t revision = 0, owner_incarnation = 0;
+        std::size_t count = 0;
+    };
+    bool sample(RosterState& roster, std::vector<Row>& rows);
+    void clear_roster();
     void load_settings();
     bool save_settings();
-    bool select(const std::vector<Row>& rows, const HailstoneRaidRoster&, std::uint32_t, std::uint64_t);
+    bool select(const std::vector<Row>& rows, std::uint32_t, std::uint64_t);
     static int callback(void*, const HailstoneArgs*, HailstoneOut*) noexcept;
     static int stock_callback(void*, const HailstoneArgs*, HailstoneOut*) noexcept;
     int ui(const HailstoneArgs*, HailstoneOut*);
@@ -64,11 +69,19 @@ private:
         std::string action, name, token;
     };
     std::optional<ManagerReview> manager_review_, stock_manager_review_;
-    void retire_manager_reviews(const HailstoneRaidRoster&, bool available);
-    bool manager_request(const HailstoneRaidRoster&, bool available, std::optional<std::uint64_t> revision,
+    void retire_manager_reviews(const RosterState&, bool available);
+    bool manager_request(const RosterState&, bool available, std::optional<std::uint64_t> revision,
                          std::string_view verb, std::string_view target, bool stock,
                          std::string_view review_token, std::string& error);
-    struct ManagerMember { std::string name; bool self = false; };
+    struct ManagerMember {
+        std::string name;
+        bool self;
+        std::uint32_t group, class_id, level, flags, spawn_id;
+        std::uint64_t incarnation;
+        bool operator==(const ManagerMember&) const = default;
+    };
+    RosterState roster_state_;
+    bool roster_locked_ = false;
     std::vector<ManagerMember> roster_members_;
     std::array<std::uint32_t,13> group_counts_{};
     bool selected_ = false, in_zone_ = false, initialized_ = false, local_leader_ = false;

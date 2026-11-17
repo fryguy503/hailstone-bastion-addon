@@ -1,5 +1,6 @@
 #include "raidbars.h"
 #include "citadel_services.h"
+#include "raid_snapshot.h"
 
 #include <algorithm>
 #include <array>
@@ -32,10 +33,28 @@ bool character_name(std::string_view name) {
         return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
     });
 }
-bool same_name(std::string_view left, std::string_view right) {
-    const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; };
-    return left.size() == right.size() && std::equal(left.begin(), left.end(), right.begin(),
-        [&](char a, char b) { return lower(a) == lower(b); });
+using raid::same_name;
+bool raid_spawn(const PluginHostApi* host, std::uint32_t id, HailstoneSpawn& spawn) {
+    spawn = {};
+    spawn.size = sizeof(spawn);
+    return id && HAILSTONE_HOST_HAS(host, get_spawn) &&
+           host->get_spawn(host->host, id, &spawn) &&
+           spawn.size >= offsetof(HailstoneSpawn, incarnation) + sizeof(spawn.incarnation) &&
+           spawn.id == id && spawn.incarnation && !spawn.is_corpse;
+}
+void set_vitals(Row& row, const HailstoneSpawn& spawn) {
+    if (spawn.size >= offsetof(HailstoneSpawn, observation_flags) + sizeof(spawn.observation_flags)) {
+        row.health = {(spawn.observation_flags & HAILSTONE_SPAWN_HP_KNOWN) != 0 &&
+                      spawn.hp_percent <= 100, spawn.hp_percent};
+    }
+    if (spawn.size >= offsetof(HailstoneSpawn, mana_percent) + sizeof(spawn.mana_percent)) {
+        row.mana = {(spawn.observation_flags & HAILSTONE_SPAWN_MANA_KNOWN) != 0 &&
+                    spawn.mana_percent <= 100, spawn.mana_percent};
+    }
+    if (spawn.size >= offsetof(HailstoneSpawn, endurance_percent) + sizeof(spawn.endurance_percent)) {
+        row.endurance = {(spawn.observation_flags & HAILSTONE_SPAWN_ENDURANCE_KNOWN) != 0 &&
+                         spawn.endurance_percent <= 100, spawn.endurance_percent};
+    }
 }
 bool manager_commands_available(const PluginHostApi* host) {
     // The callback stays installed when server permissions change. /say is held to live CHAT caps.
@@ -116,8 +135,8 @@ std::vector<Row> visible_rows(std::vector<Row> rows,const Settings& config){
         return config.priority.size()+static_cast<std::size_t>(fallback-defaults.begin());};
     std::stable_sort(rows.begin(),rows.end(),[&](const Row& a,const Row& b){
         if(config.get("group_sort")&&a.group!=b.group)return (a.group?a.group:13)<(b.group?b.group:13);
-        if(config.get("group_sort")&&((a.flags&HAILSTONE_RAID_GROUP_LEADER)!=0)!=((b.flags&HAILSTONE_RAID_GROUP_LEADER)!=0))
-            return (a.flags&HAILSTONE_RAID_GROUP_LEADER)!=0;
+        if(config.get("group_sort")&&((a.flags&HS_BULK_RAID_GROUP_LEADER)!=0)!=((b.flags&HS_BULK_RAID_GROUP_LEADER)!=0))
+            return (a.flags&HS_BULK_RAID_GROUP_LEADER)!=0;
         if(rank(a.class_id)!=rank(b.class_id))return rank(a.class_id)<rank(b.class_id);
         return a.name<b.name;
     });
@@ -141,20 +160,21 @@ void Adapter::shutdown(){
         if(initialized_)host_->remove_ui_function(host_->host,"raidbars");
         if(stock_function_)host_->remove_ui_function(host_->host,"raid_manager_action");
     }
-    initialized_=stock_function_=false;manager_review_.reset();stock_manager_review_.reset();roster_members_.clear();
+    initialized_=stock_function_=false;clear_roster();
 }
-void Adapter::peer(bool selected){directory_cache_.reset();selected_=selected;if(!selected){in_zone_=false;identity_.clear();file_.clear();settings_=Settings{};manager_review_.reset();stock_manager_review_.reset();roster_members_.clear();}}
-void Adapter::game_state(int state){directory_cache_.reset();in_zone_=state==GAMESTATE_INGAME;if(!in_zone_){identity_.clear();file_.clear();manager_review_.reset();stock_manager_review_.reset();roster_members_.clear();}}
-void Adapter::begin_zone(){directory_cache_.reset();in_zone_=false;manager_review_.reset();stock_manager_review_.reset();roster_members_.clear();}
+void Adapter::peer(bool selected){directory_cache_.reset();clear_roster();selected_=selected;if(!selected){in_zone_=false;identity_.clear();file_.clear();settings_=Settings{};}}
+void Adapter::game_state(int state){directory_cache_.reset();in_zone_=state==GAMESTATE_INGAME;if(!in_zone_){identity_.clear();file_.clear();clear_roster();}}
+void Adapter::begin_zone(){directory_cache_.reset();in_zone_=false;clear_roster();}
 void Adapter::load_settings(){
     const auto directory=directory_cache_.get(host_);
     if(directory.empty()){
+        if(!identity_.empty())clear_roster();
         file_.clear();identity_.clear();settings_=Settings{};manager_review_.reset();stock_manager_review_.reset();
         error_="Character settings directory is unavailable.";return;
     }
     const auto file=directory/"raidbars.cfg";
     if(file.generic_string()==identity_)return;
-    file_=file;identity_=file.generic_string();settings_=Settings{};error_.clear();manager_review_.reset();stock_manager_review_.reset();
+    clear_roster();file_=file;identity_=file.generic_string();settings_=Settings{};error_.clear();
     std::error_code error;const auto bytes=std::filesystem::file_size(file,error);
     if(error||bytes>8192)return;
     std::ifstream input(file);std::string line;Settings next;
@@ -185,37 +205,77 @@ bool Adapter::save_settings(){
         error_="Raid bar settings could not be replaced.";return false;}
     error_.clear();return true;
 }
-bool Adapter::sample(HailstoneRaidRoster& roster,std::vector<Row>& rows){
+void Adapter::clear_roster() {
+    roster_state_ = {};
+    roster_locked_ = false;
     local_leader_=false;
     group_counts_.fill(0);
     roster_members_.clear();
-    if(!selected_||!HAILSTONE_HOST_HAS(host_,get_raid_member)||!HAILSTONE_HOST_HAS(host_,get_raid_roster)||!HAILSTONE_HOST_HAS(host_,get_player))return false;
+    manager_review_.reset();
+    stock_manager_review_.reset();
+}
+bool Adapter::sample(RosterState& roster,std::vector<Row>& rows){
+    const auto unavailable = [&] {
+        clear_roster();
+        return false;
+    };
+    roster = {};
+    if(!selected_||!HAILSTONE_HOST_HAS(host_,get_raid_data_bulk)||!HAILSTONE_HOST_HAS(host_,get_player))return unavailable();
     HailstonePlayer player{};player.size=sizeof(player);
     if(!host_->get_player(host_->host,&player)||player.size<offsetof(HailstonePlayer,in_zone)+sizeof(player.in_zone)||
-        !player.in_zone||player.game_state!=GAMESTATE_INGAME)return false;
+        !player.in_zone||player.game_state!=GAMESTATE_INGAME)return unavailable();
     load_settings();
-    roster={};roster.size=sizeof(roster);
+    const auto snapshot = raid::read(host_);
+    if (!snapshot) return unavailable();
     // Settings and the preview remain usable when the character is outside a raid.
-    if(!host_->get_raid_roster(host_->host,&roster)){roster={};roster.size=sizeof(roster);return true;}
-    if(!roster.revision||!roster.owner_incarnation||roster.count>72)return false;
-    const auto vitals=[&](Row& row){
-        if(!row.spawn_id||!row.incarnation||!HAILSTONE_HOST_HAS(host_,get_spawn))return;
-        HailstoneSpawn spawn{};spawn.size=sizeof(spawn);
-        if(!host_->get_spawn(host_->host,row.spawn_id,&spawn)||spawn.size<offsetof(HailstoneSpawn,mana_percent)+sizeof(spawn.mana_percent)||spawn.incarnation!=row.incarnation)return;
-        row.health={(spawn.observation_flags&HAILSTONE_SPAWN_HP_KNOWN)!=0&&spawn.hp_percent<=100,spawn.hp_percent};
-        row.mana={(spawn.observation_flags&HAILSTONE_SPAWN_MANA_KNOWN)!=0&&spawn.mana_percent<=100,spawn.mana_percent};
-        if(spawn.size>=offsetof(HailstoneSpawn,endurance_percent)+sizeof(spawn.endurance_percent))
-            row.endurance={(spawn.observation_flags&HAILSTONE_SPAWN_ENDURANCE_KNOWN)!=0&&spawn.endurance_percent<=100,spawn.endurance_percent};
-    };
-    for(std::uint32_t i=0;i<roster.count;++i){
-        HailstoneRaidMember member{};member.size=sizeof(member);
-        if(!host_->get_raid_member(host_->host,roster.revision,i,&member)||member.group_id>12)return false;
-        ++group_counts_[member.group_id];
-        Row row;row.name=bounded(member.name);row.group=member.group_id;row.class_id=member.class_id;row.level=member.level;
-        row.self=member.spawn_id==player.spawn_id;
-        if(row.self&&(member.flags&HAILSTONE_RAID_LEADER)!=0)local_leader_=true;
-        row.flags=member.flags;row.spawn_id=member.spawn_id;row.incarnation=member.incarnation;vitals(row);rows.push_back(std::move(row));
+    if (snapshot->header.active == 0) {
+        clear_roster();
+        return true;
     }
+    HailstoneSpawn player_spawn{};
+    if (!raid_spawn(host_, player.spawn_id, player_spawn) || player_spawn.is_npc) return unavailable();
+
+    local_leader_ = false;
+    group_counts_.fill(0);
+    std::vector<ManagerMember> members;
+    members.reserve(snapshot->members.size());
+    rows.reserve(snapshot->members.size());
+    for (const auto& member : snapshot->members) {
+        Row row;
+        row.name = bounded(member.name);
+        row.group = static_cast<std::uint32_t>(member.group + 1);
+        row.class_id = static_cast<std::uint32_t>(std::max(member.classID, 0));
+        row.level = static_cast<std::uint32_t>(std::max(member.level, 0));
+        row.flags = member.flags;
+        row.self = (member.flags & HS_BULK_RAID_ME) != 0 || member.spawnID == player.spawn_id;
+        local_leader_ |= row.self && (member.flags & HS_BULK_RAID_LEADER) != 0;
+        ++group_counts_[row.group];
+
+        HailstoneSpawn spawn = player_spawn;
+        const bool observed = member.spawnID == player_spawn.id || raid_spawn(host_, member.spawnID, spawn);
+        // The bulk snapshot names the actor; get_spawn supplies its current identity and reported vitals.
+        if (observed && !spawn.is_npc && same_name(bounded(spawn.name), row.name)) {
+            row.spawn_id = member.spawnID;
+            row.incarnation = spawn.incarnation;
+            set_vitals(row, spawn);
+        }
+        members.push_back({row.name, row.self, row.group, row.class_id, row.level, row.flags, row.spawn_id, row.incarnation});
+        rows.push_back(std::move(row));
+    }
+    // The SDK returns a fresh roster per read. Keep a separate identity for UI requests and reviews
+    // so movement, vitals and target updates don't stale the UI's roster revision.
+    const bool locked = snapshot->header.locked != 0;
+    if (!roster_state_.revision || roster_state_.owner_incarnation != player_spawn.incarnation ||
+        roster_locked_ != locked || roster_members_ != members) {
+        roster_state_ = {services::token(), player_spawn.incarnation, members.size()};
+        roster_locked_ = locked;
+        roster_members_ = std::move(members);
+    }
+    if (!roster_state_.revision) {
+        rows.clear();
+        return unavailable();
+    }
+    roster = roster_state_;
     if(settings_.get("show_pets")&&HAILSTONE_HOST_HAS(host_,next_spawn)){
         std::uint32_t after=0;
         for(unsigned work=0;work<4096;++work){
@@ -226,29 +286,25 @@ bool Adapter::sample(HailstoneRaidRoster& roster,std::vector<Row>& rows){
             auto owner=std::find_if(rows.begin(),rows.end(),[&](const Row& row){return !row.pet&&row.spawn_id==spawn.owner_id&&row.incarnation;});
             if(owner==rows.end())continue;
             Row pet;pet.name=bounded(spawn.name);pet.group=owner->group;pet.class_id=owner->class_id;pet.owner_id=owner->spawn_id;
-            pet.spawn_id=spawn.id;pet.incarnation=spawn.incarnation;pet.pet=true;vitals(pet);
+            pet.spawn_id=spawn.id;pet.incarnation=spawn.incarnation;pet.pet=true;set_vitals(pet,spawn);
             if(owner->pets.size()<4)owner->pets.push_back(std::move(pet));
         }
     }
-    HailstoneRaidRoster current{};current.size=sizeof(current);
-    if(!host_->get_raid_roster(host_->host,&current)||current.revision!=roster.revision||current.owner_incarnation!=roster.owner_incarnation)return false;
-    roster_members_.reserve(rows.size());
-    for(const auto& row:rows)roster_members_.push_back({row.name,row.self});
     rows=visible_rows(std::move(rows),settings_);return true;
 }
-bool Adapter::select(const std::vector<Row>& rows,const HailstoneRaidRoster& roster,std::uint32_t id,std::uint64_t incarnation){
+bool Adapter::select(const std::vector<Row>& rows,std::uint32_t id,std::uint64_t incarnation){
     const Row* found=nullptr;
     for(const auto& row:rows){
         if(row.spawn_id==id&&row.incarnation==incarnation)found=&row;
         for(const auto& pet:row.pets)if(pet.spawn_id==id&&pet.incarnation==incarnation)found=&pet;
     }
-    if(!found||!roster.revision)return false;
+    if(!found)return false;
     HailstonePlayer player{};player.size=sizeof(player);
     if(settings_.get("combine_pets")&&!found->pet&&!found->pets.empty()&&
        host_->get_player(host_->host,&player)&&player.target_id==id){
         const auto& pet=found->pets.front();id=pet.spawn_id;incarnation=pet.incarnation;
     }
-    return host_->select_raid_member(host_->host,roster.revision,id,incarnation)!=0;
+    return host_->select_raid_member(host_->host,id,incarnation)!=0;
 }
 int Adapter::callback(void* self,const HailstoneArgs* args,HailstoneOut* out) noexcept {
     if (!self) return 0;
@@ -260,7 +316,7 @@ int Adapter::stock_callback(void* self,const HailstoneArgs* args,HailstoneOut* o
     auto& owner=*static_cast<Adapter*>(self);
     return services::guarded_ui(owner.host_,[&]{return owner.stock_action(args,out);});
 }
-void Adapter::retire_manager_reviews(const HailstoneRaidRoster& roster,bool available){
+void Adapter::retire_manager_reviews(const RosterState& roster,bool available){
     const auto stale=[&](const ManagerReview& review){
         return !available||!roster.count||!manager_commands_available(host_)||review.revision!=roster.revision||
             review.owner_incarnation!=roster.owner_incarnation||
@@ -269,7 +325,7 @@ void Adapter::retire_manager_reviews(const HailstoneRaidRoster& roster,bool avai
     if(manager_review_&&(!settings_.get("manage")||stale(*manager_review_)))manager_review_.reset();
     if(stock_manager_review_&&stale(*stock_manager_review_))stock_manager_review_.reset();
 }
-bool Adapter::manager_request(const HailstoneRaidRoster& roster,bool available,std::optional<std::uint64_t> revision,
+bool Adapter::manager_request(const RosterState& roster,bool available,std::optional<std::uint64_t> revision,
                              std::string_view verb,std::string_view target,bool stock,
                              std::string_view review_token,std::string& error){
     auto& pending=stock?stock_manager_review_:manager_review_;
@@ -315,7 +371,7 @@ int Adapter::stock_action(const HailstoneArgs* args,HailstoneOut* out){
     const auto window=services::argument(host_,args,0,32),id=services::argument(host_,args,1,64),
         phase=services::argument(host_,args,2,16),selection=services::argument(host_,args,3,64),
         review_token=services::argument(host_,args,4,128);
-    HailstoneRaidRoster roster{};std::vector<Row> rows;const bool available=in_zone_&&sample(roster,rows);
+    RosterState roster{};std::vector<Row> rows;const bool available=in_zone_&&sample(roster,rows);
     retire_manager_reviews(roster,available);
     bool okay=false;std::string message;std::string returned_token;
     if(!selected_||!stock_function_||!window||*window!="RaidWindow"||!id||!phase||!selection||!review_token)
@@ -352,12 +408,12 @@ int Adapter::ui(const HailstoneArgs* args,HailstoneOut* out){
     const auto operation=bounded(op.s,16);
     if(operation=="status"){
         HailstonePlayer player{};player.size=sizeof(player);
-        const bool available=selected_&&HAILSTONE_HOST_HAS(host_,get_player)&&HAILSTONE_HOST_HAS(host_,get_raid_roster)&&
-            HAILSTONE_HOST_HAS(host_,get_raid_member)&&host_->get_player(host_->host,&player)&&
+        const bool available=selected_&&HAILSTONE_HOST_HAS(host_,get_player)&&HAILSTONE_HOST_HAS(host_,get_raid_data_bulk)&&
+            host_->get_player(host_->host,&player)&&
             player.size>=offsetof(HailstonePlayer,in_zone)+sizeof(player.in_zone)&&player.in_zone&&
             player.game_state==GAMESTATE_INGAME;
         if(available)load_settings();
-        else { manager_review_.reset();stock_manager_review_.reset(); }
+        if(!available||!player.in_raid)clear_roster();
         host_->out_begin_table(host_->host,out);
         integer(*host_,out,"available",available);integer(*host_,out,"in_zone",available&&in_zone_);
         integer(*host_,out,"in_raid",available&&player.in_raid);
@@ -366,7 +422,7 @@ int Adapter::ui(const HailstoneArgs* args,HailstoneOut* out){
         integer(*host_,out,"enabled",settings_.get("enabled"));host_->out_end(host_->host,out);
         host_->out_end(host_->host,out);return 1;
     }
-    HailstoneRaidRoster roster{};std::vector<Row> rows;
+    RosterState roster{};std::vector<Row> rows;
     const bool available=sample(roster,rows);
     const bool manager_supported=manager_commands_available(host_);
     retire_manager_reviews(roster,available);
@@ -419,9 +475,7 @@ int Adapter::ui(const HailstoneArgs* args,HailstoneOut* out){
         const auto expected=rev.kind==HAILSTONE_STRING&&rev.s?token(bounded(rev.s,21)):std::nullopt;
         const auto incarnation=identity.kind==HAILSTONE_STRING&&identity.s?token(bounded(identity.s,21)):std::nullopt;
         if(expected&&*expected==roster.revision&&incarnation&&id.kind==HAILSTONE_INT&&id.i>0&&id.i<=0xffffffffll){
-            const auto exact=[&](const Row& r){return r.spawn_id==static_cast<std::uint32_t>(id.i)&&r.incarnation==*incarnation;};
-            const bool found=std::any_of(rows.begin(),rows.end(),[&](const Row& r){return exact(r)||std::any_of(r.pets.begin(),r.pets.end(),exact);});
-            if(found)okay=select(rows,roster,static_cast<std::uint32_t>(id.i),*incarnation);
+            okay=select(rows,static_cast<std::uint32_t>(id.i),*incarnation);
         }
     }else if(operation=="manager"){
         const auto rev=arg(1),action=arg(2),name=arg(3);
@@ -440,8 +494,9 @@ int Adapter::ui(const HailstoneArgs* args,HailstoneOut* out){
             const bool room=action.i!=1||destination==0||group_counts_[destination]<6||
                             (current!=rows.end()&&current->group==destination);
             if(member.size()<64&&current!=rows.end()&&room){
-                if(HAILSTONE_HOST_HAS(host_,raid_action))
-                    okay=host_->raid_action(host_->host,*expected,member.c_str(),static_cast<std::uint32_t>(action.i),destination)!=0;
+                if(action.i==HAILSTONE_RAID_MOVE&&HAILSTONE_HOST_HAS(host_,raid_action))
+                    okay=host_->raid_action(host_->host,member.c_str(),HAILSTONE_RAID_MOVE,
+                                            static_cast<std::int32_t>(destination)-1)!=0;
                 // Bastion also authorizes delegated managers server-side (#raidmanager).
                 // An explicit fallback preserves Citadel's requests without inventing a local permission bit.
                 // Success here means requested, never server acceptance.
@@ -465,7 +520,7 @@ bool Adapter::command(std::string_view args) {
         say("/raidbars always|never|filter|priority <class codes>; status; set <setting> <integer>");
         return true;
     }
-    HailstoneRaidRoster roster{};std::vector<Row> rows;if(!sample(roster,rows))return false;
+    RosterState roster{};std::vector<Row> rows;if(!sample(roster,rows))return false;
     if(args=="status"){
         say(std::string("Raid bars ")+(settings_.get("enabled")?"on":"off")+", "+std::to_string(roster.count)+" raid members, "+std::to_string(rows.size())+" displayed rows; unknown resources remain unavailable.");return true;
     }

@@ -1,8 +1,8 @@
 #include "citadel_test_host.h"
 #include <algorithm>
 #include <iostream>
-extern "C" std::uint64_t hailstone_plugin_layout();
-extern "C" int hailstone_plugin_set_host_v2(const PluginHostApi*,std::uint64_t);
+extern "C" std::uint32_t hailstone_plugin_abi();
+extern "C" void hailstone_plugin_set_host(const PluginHostApi*);
 extern "C" void InitializePlugin();
 extern "C" void ShutdownPlugin();
 extern "C" void SetGameState(int);
@@ -22,12 +22,7 @@ int legacy_map_policy_read(HailstoneMapPolicy* out,std::size_t prefix) {
     return 1;
 }
 int main() { try {
-    static_assert(HAILSTONE_PLUGIN_LAYOUT==HAILSTONE_PLUGIN_LAYOUT_ABI3_CANONICAL_2);
-    static_assert(HAILSTONE_PLUGIN_LAYOUT!=HAILSTONE_PLUGIN_LAYOUT_ABI3_CANONICAL_1);
-    static_assert(offsetof(PluginHostApi,get_raid_roster)==offsetof(PluginHostApi,get_raid_data_bulk)+
-                  sizeof(PluginHostApi::get_raid_data_bulk));
-    static_assert(sizeof(PluginHostApi)==offsetof(PluginHostApi,get_map_policy)+sizeof(PluginHostApi::get_map_policy));
-    check(hailstone_plugin_layout()==HAILSTONE_PLUGIN_LAYOUT,"plugin export does not identify the SDK's exact host layout");
+    check(hailstone_plugin_abi()==HAILSTONE_PLUGIN_ABI,"plugin export does not report the SDK ABI");
     Host binding;
     static unsigned binding_calls=0;
     binding.api.add_ui_function=[](void*,const char*,HailstoneUiFn,void*) { ++binding_calls;return 1; };
@@ -37,31 +32,9 @@ int main() { try {
     binding.api.log=[](void*,int,const char*) { ++binding_calls; };
     binding.api.do_command=[](void*,const char*) { ++binding_calls; };
     binding.api.send_packet=[](void*,int,std::uint16_t,const void*,std::size_t) { ++binding_calls;return 0; };
-    constexpr auto released_prefix=offsetof(PluginHostApi,get_raid_roster);
-    constexpr auto prior_canonical_extent=sizeof(PluginHostApi)-sizeof(PluginHostApi::get_raid_data_bulk);
-    static_assert(prior_canonical_extent>=released_prefix); // refusal below must depend on the marked layout
-    struct BindingCase {
-        const char* name;
-        const PluginHostApi* api;
-        std::size_t bytes;
-        std::uint64_t layout;
-        int accepted;
-    };
-    const BindingCase binding_cases[]={
-        {"full canonical table",&binding.api,sizeof(PluginHostApi),HAILSTONE_PLUGIN_LAYOUT,1},
-        {"published canonical 1/F6 table",&binding.api,prior_canonical_extent,HAILSTONE_PLUGIN_LAYOUT_ABI3_CANONICAL_1,0},
-        {"wrong canonical layout",&binding.api,sizeof(PluginHostApi),HAILSTONE_PLUGIN_LAYOUT^UINT64_C(1),0},
-        {"null host table",nullptr,sizeof(PluginHostApi),HAILSTONE_PLUGIN_LAYOUT,0},
-        {"short released prefix",&binding.api,released_prefix-1,HAILSTONE_PLUGIN_LAYOUT,0},
-        {"exact released prefix",&binding.api,released_prefix,HAILSTONE_PLUGIN_LAYOUT,1}
-    };
-    for(const auto& test:binding_cases) {
-        binding.api.size=static_cast<std::uint32_t>(test.bytes);
-        check(hailstone_plugin_set_host_v2(test.api,test.layout)==test.accepted,
-              (std::string(test.name)+": versioned binding accepted the wrong extent or layout").c_str());
-        check(binding_calls==0&&binding.functions.empty()&&binding.commands.empty()&&binding.sent.empty(),
-              (std::string(test.name)+": binding invoked host services before initialization").c_str());
-    }
+    hailstone_plugin_set_host(&binding.api);
+    check(binding_calls==0&&binding.functions.empty()&&binding.commands.empty()&&binding.sent.empty(),
+          "binding invoked host services before initialization");
     Host h;
     h.api.world_surface_patch=[](void*,const HailstoneWorldSurfacePatch*,HailstoneWorldSurfacePatchResult*) -> int { return HAILSTONE_WORLD_PATCH_DEFERRED; };
     h.api.measure_binary=[](void*,std::uint32_t,HailstoneBinaryMeasurement*) -> int { return 0; };
@@ -69,7 +42,7 @@ int main() { try {
         if(!out||out->size<sizeof(*out))return 0;
         *out={};out->size=sizeof(*out);out->revision=37;out->context=91;return 1;
     };
-    check(hailstone_plugin_set_host_v2(&h.api,HAILSTONE_PLUGIN_LAYOUT)==1,"canonical host was rejected after binding failures");
+    hailstone_plugin_set_host(&h.api);
     InitializePlugin(); SetGameState(GAMESTATE_INGAME);
     const auto* hooks=hailstone_plugin_hooks();
     check(hooks && hooks->map_visible && hooks->map_policy && hooks->merchant_right_click,"missing extension hooks");
@@ -119,7 +92,7 @@ int main() { try {
     check(hooks->map_policy(&policy)==0&&policy.flags==0,"non-Bastion world retained stock-map restrictions");
     ShutdownPlugin(); check(h.functions.empty(),"unload left UI callbacks");
     const auto policy_reader=h.api.get_map_policy;
-    for(const auto table_size:{offsetof(PluginHostApi,get_raid_roster),offsetof(PluginHostApi,get_map_policy),sizeof(PluginHostApi)}) {
+    for(const auto table_size:{offsetof(PluginHostApi,get_raid_data_bulk),offsetof(PluginHostApi,get_map_policy),sizeof(PluginHostApi)}) {
         h.api.size=static_cast<std::uint32_t>(table_size);
         h.api.get_map_policy=table_size==sizeof(PluginHostApi)?nullptr:policy_reader;
         InitializePlugin(); SetGameState(GAMESTATE_INGAME);
@@ -183,6 +156,44 @@ int main() { try {
         check((hooks->command_line("/bastion settings")!=nullptr)==test.accepted,
               because("command activation disagrees with map-policy service support").c_str());
         ShutdownPlugin();check(h.functions.empty(),because("unload left callbacks").c_str());
+    }
+
+    struct ServerFixture { const char* host; const char* world; bool already_in_zone; };
+    static ServerFixture server{};
+    h.api.server_info=[](void*,HailstoneServer* out) {
+        std::copy_n(server.host,std::strlen(server.host)+1,out->host);
+        std::copy_n(server.world,std::strlen(server.world)+1,out->world);
+        return 1;
+    };
+    h.api.get_player=[](void*,HailstonePlayer* out) {
+        out->game_state=server.already_in_zone?GAMESTATE_INGAME:GAMESTATE_PRECHARSELECT;
+        out->in_zone=server.already_in_zone;
+        return 1;
+    };
+    h.api.get_map_policy=policy_reader;
+    const auto active = [&] { return hooks->command_line("/bastion settings")!=nullptr; };
+    server={"login.bastiongame.com","Bastion - Production",true};
+    InitializePlugin();
+    check(active(),"late load in the Bastion production zone did not activate");
+    data.assign(560,std::byte{});text(data,36,"OtherWorld");
+    p.opcode=0x7ceb;p.data=reinterpret_cast<std::uint8_t*>(data.data());p.size=data.size();
+    OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_IN,&p);SetGameState(GAMESTATE_INGAME);
+    check(!active(),"fallback overrode an explicit non-Bastion announcement");
+    ShutdownPlugin();
+
+    server.already_in_zone=false;
+    InitializePlugin();
+    check(!active(),"late fallback ran before zone-in");
+    SetGameState(GAMESTATE_INGAME);
+    check(active(),"late fallback failed on the Bastion zone-in event");
+    ShutdownPlugin();
+
+    for(const auto& unrelated:{ServerFixture{"localhost","Bastion - Production",true},
+                              ServerFixture{"login.bastiongame.com","Unrelated World",true}}) {
+        server=unrelated;
+        InitializePlugin();SetGameState(GAMESTATE_INGAME);
+        check(!active(),"late fallback accepted an unrelated server");
+        ShutdownPlugin();
     }
     std::cout<<checks<<" plugin checks passed\n"; return 0;
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; } }

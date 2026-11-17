@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-#define HAILSTONE_HOST
 #include "hailstone_plugin.h"
 #include "hailstone_byte_io.h"
 #include "citadel_hub.h"
@@ -21,9 +20,10 @@
 #include <string>
 #include <string_view>
 
+HAILSTONE_PLUGIN
+
 namespace {
-const PluginHostApi* host=nullptr;
-bool selected=false, initialized=false;
+bool selected=false, initialized=false, saw_world_announcement=false;
 bastion::CitadelHub hub;
 bastion::follow::Addon follow;
 bastion::raidbars::Adapter raid;
@@ -64,18 +64,31 @@ void peer(bool value) {
     factions.peer(value); expeditions.peer(value); pets.peer(value);
     home.peer(value); gear.peer(value); telegraphs.peer(value); firefell.peer(value); commands.peer(value); integrity.peer(value); kinbound.clear();
 }
+std::string lower(std::string_view text) {
+    std::string result(text);
+    for (auto& c:result) if(c>='A' && c<='Z') c=static_cast<char>(c+'a'-'A');
+    return result;
+}
+bool official_world() {
+    if (!HAILSTONE_HOST_HAS(host, server_info)) return false;
+    HailstoneServer server{};
+    server.size = sizeof(server);
+    return host->server_info(host->host, &server) &&
+           lower(bastion::services::bounded(server.host)) == "login.bastiongame.com" &&
+           lower(bastion::services::bounded(server.world)) == "bastion - production";
+}
 void state(int value) {
-    if (value==GAMESTATE_PRECHARSELECT || value==GAMESTATE_UNLOADING) peer(false);
+    if (value==GAMESTATE_PRECHARSELECT || value==GAMESTATE_UNLOADING) {
+        saw_world_announcement=false;
+        peer(false);
+    }
+    // With no cached rules or a late consent, required plugins can first load at zone-in.
+    if (value==GAMESTATE_INGAME && !selected && !saw_world_announcement && official_world()) peer(true);
     hub.game_state(value); follow.game_state(value); raid.game_state(value);
     factions.game_state(value); expeditions.game_state(value); pets.game_state(value);
     home.game_state(value); gear.game_state(value); telegraphs.game_state(value); firefell.game_state(value);
     integrity.game_state(value);
     if(value==GAMESTATE_CHARSELECT || value==GAMESTATE_PRECHARSELECT || value==GAMESTATE_UNLOADING) kinbound.clear();
-}
-std::string lower(std::string_view text) {
-    std::string result(text);
-    for (auto& c:result) if(c>='A' && c<='Z') c=static_cast<char>(c+'a'-'A');
-    return result;
 }
 std::string_view word(std::string_view& text) {
     while(!text.empty() && (text.front()==' ' || text.front()=='\t')) text.remove_prefix(1);
@@ -148,8 +161,12 @@ const char* command(const char* line) noexcept {
 int packet(int stream,int direction,HailstonePacket* p) {
     if(!initialized || !p) return 0;
     if(stream==HAILSTONE_STREAM_WORLD) {
-        if(direction==HAILSTONE_OUT && p->opcode==0x7a09) peer(false);
+        if(direction==HAILSTONE_OUT && p->opcode==0x7a09) {
+            saw_world_announcement=false;
+            peer(false);
+        }
         if(direction==HAILSTONE_IN && p->opcode==0x7ceb) {
+            saw_world_announcement=true;
             peer(false);
             if(p->data && p->size==560) {
                 const char* name=reinterpret_cast<const char*>(p->data)+36;
@@ -167,14 +184,6 @@ int packet(int stream,int direction,HailstonePacket* p) {
         gear.packet(p->opcode,p->data,p->size) || firefell.packet(p->opcode,p->data,p->size);
 }
 }
-HAILSTONE_API uint32_t hailstone_plugin_abi(void) { return HAILSTONE_PLUGIN_ABI; }
-HAILSTONE_API uint64_t hailstone_plugin_layout(void) { return HAILSTONE_PLUGIN_LAYOUT; }
-HAILSTONE_API int hailstone_plugin_set_host_v2(const PluginHostApi* value,uint64_t layout) {
-    if(!value || layout!=HAILSTONE_PLUGIN_LAYOUT || value->size<offsetof(PluginHostApi,get_raid_roster)) {
-        host=nullptr;return 0;
-    }
-    host=value;return 1;
-}
 HAILSTONE_API uint32_t hailstone_plugin_caps(void) {
     return HAILSTONE_CAP_READ|HAILSTONE_CAP_COMMANDS|HAILSTONE_CAP_TARGET|HAILSTONE_CAP_ACTIONS|
         HAILSTONE_CAP_MOVE|HAILSTONE_CAP_CHAT|HAILSTONE_CAP_EVENTS|HAILSTONE_CAP_UI|
@@ -186,7 +195,12 @@ HAILSTONE_API void InitializePlugin(void) noexcept { guarded([] {
     home.set_host(host); gear.set_host(host); telegraphs.set_host(host); firefell.set_host(host); commands.set_host(host); integrity.set_host(host);
     hub.initialize(open); follow.initialize(); raid.initialize(); factions.initialize(); expeditions.initialize(); pets.initialize();
     home.initialize(); gear.initialize(); telegraphs.initialize(); firefell.initialize(); commands.initialize(); integrity.initialize();
+    saw_world_announcement=false;
     peer(false); initialized=true;
+    HailstonePlayer player{};
+    player.size = sizeof(player);
+    if (HAILSTONE_HOST_HAS(host, get_player) && host->get_player(host->host, &player) && player.in_zone)
+        state(player.game_state);
 }); }
 HAILSTONE_API void ShutdownPlugin(void) noexcept { guarded([] {
     initialized=false; peer(false);

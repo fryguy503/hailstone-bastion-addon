@@ -1,5 +1,6 @@
 #include "citadel_hub.h"
 #include "citadel_services.h"
+#include "raid_snapshot.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -21,62 +22,58 @@ bool merchant(std::uint32_t c) { return c==41 || c==61 || c==67 || c==68 || c==7
 std::span<const Preference> citadel_preferences() { return definitions; }
 CitadelHub::CitadelHub() : map_raid_generation_(services::token()), map_revision_(services::token()) {}
 void CitadelHub::retire_map_raid() const {
-    map_raid_ = {};
+    map_raid_.owner = 0;
+    map_raid_.count = 0;
     map_raid_generation_ = services::token();
 }
 bool CitadelHub::map_raid_member(const HailstoneSpawn& actor,const HailstonePlayer& player,const HailstoneSpawn& me) const {
     if (map_raid_running_) { retire_map_raid(); return false; }
-    if (!selected_ || !in_game_ || !me.incarnation || !HAILSTONE_HOST_HAS(host_,get_raid_roster) ||
-        !HAILSTONE_HOST_HAS(host_,get_raid_member)) { map_raid_={}; return false; }
-    map_raid_running_=true;
-    struct Finish {
-        MapRaid& cache;
-        bool& running;
-        bool complete=false;
-        ~Finish() { if (!complete) cache={}; running=false; }
-    } finish{map_raid_,map_raid_running_};
-    const auto* host=host_;
-    const auto generation=map_raid_generation_;
-    const auto current=[&] { return selected_ && in_game_ && host_==host && map_raid_generation_==generation; };
-    const auto read=[&](HailstoneRaidRoster& roster) {
-        roster={};roster.size=sizeof(roster);
-        return host->get_raid_roster(host->host,&roster) && current() &&
-            roster.size>=offsetof(HailstoneRaidRoster,count)+sizeof(roster.count) && roster.revision &&
-            roster.owner_incarnation==me.incarnation && roster.count<=map_raid_.actors.size();
-    };
-    HailstoneRaidRoster roster{};
-    if (!read(roster)) { map_raid_={}; return false; }
-    const auto matches=[&](const MapRaid& cached) {
-        return cached.revision==roster.revision && cached.owner==roster.owner_incarnation &&
-            cached.player==player.spawn_id && cached.zone==player.zone_id && cached.instance==player.zone_instance &&
-            cached.source_count==roster.count;
-    };
-    if (!matches(map_raid_)) {
-        // Only display membership is retained. Every query above still checks the current host roster;
-        // neither authorization nor vitals/actions use this snapshot.
-        map_raid_={};
+    if (!selected_ || !in_game_ || !me.incarnation || !HAILSTONE_HOST_HAS(host_,get_spawn)) return false;
+    if (map_raid_.owner != me.incarnation || map_raid_.player != player.spawn_id ||
+        map_raid_.zone != player.zone_id || map_raid_.instance != player.zone_instance) {
+        // Bulk data has no revision or incarnations. Resolve a display-only snapshot once after each pulse.
+        const auto* host = host_;
+        const auto generation = map_raid_generation_;
+        map_raid_running_ = true;
+        struct Finish {
+            bool& running;
+            ~Finish() { running = false; }
+        } finish{map_raid_running_};
+        map_raid_ = {};
+        const auto snapshot = raid::read(host);
+        if (generation != map_raid_generation_) return false;
         MapRaid next;
-        next.revision=roster.revision;next.owner=roster.owner_incarnation;
-        next.player=player.spawn_id;next.zone=player.zone_id;next.instance=player.zone_instance;
-        next.source_count=roster.count;
-        for (std::uint32_t index=0;index<roster.count;++index) {
-            HailstoneRaidMember member{};member.size=sizeof(member);
-            if (!host->get_raid_member(host->host,roster.revision,index,&member) || !current() ||
-                member.size<offsetof(HailstoneRaidMember,incarnation)+sizeof(member.incarnation) ||
-                ((member.spawn_id==0)!=(member.incarnation==0))) { map_raid_={}; return false; }
-            if (member.spawn_id) next.actors[next.count++]={member.spawn_id,member.incarnation};
+        next.owner = me.incarnation;
+        next.player = player.spawn_id;
+        next.zone = player.zone_id;
+        next.instance = player.zone_instance;
+        if (snapshot && snapshot->header.active) {
+            for (const auto& member : snapshot->members) {
+                if (!member.spawnID) continue;
+                HailstoneSpawn spawn{};
+                spawn.size = sizeof(spawn);
+                const auto found = host->get_spawn(host->host, member.spawnID, &spawn);
+                if (generation != map_raid_generation_) return false;
+                if (!found || spawn.id != member.spawnID ||
+                    spawn.size < offsetof(HailstoneSpawn, incarnation) + sizeof(spawn.incarnation) ||
+                    !spawn.incarnation) {
+                    next.count = 0;
+                    break;
+                }
+                const auto name = services::bounded(member.name);
+                if (spawn.is_npc || spawn.is_corpse || name.empty() ||
+                    !raid::same_name(name, services::bounded(spawn.name))) continue;
+                next.actors[next.count++] = {spawn.id, spawn.incarnation};
+            }
+            auto observations = std::span(next.actors).first(next.count);
+            std::ranges::sort(observations);
+            if (std::ranges::adjacent_find(observations, {}, &MapRaid::Actor::first) != observations.end())
+                next.count = 0;
         }
-        HailstoneRaidRoster final{};
-        if (!read(final) || final.revision!=roster.revision || final.owner_incarnation!=roster.owner_incarnation ||
-            final.count!=roster.count) { map_raid_={}; return false; }
-        std::sort(next.actors.begin(),next.actors.begin()+static_cast<std::ptrdiff_t>(next.count));
-        for (std::size_t index=1;index<next.count;++index)
-            if (next.actors[index-1].first==next.actors[index].first) { map_raid_={}; return false; }
-        map_raid_=next;
+        map_raid_ = next;
     }
-    finish.complete=true;
-    return std::binary_search(map_raid_.actors.begin(),map_raid_.actors.begin()+static_cast<std::ptrdiff_t>(map_raid_.count),
-                              std::pair{actor.id,actor.incarnation});
+    const auto observations = std::span(map_raid_.actors).first(map_raid_.count);
+    return std::ranges::binary_search(observations, std::pair{actor.id, actor.incarnation});
 }
 void CitadelHub::observe_map_settings() {
     std::array<std::int64_t,6> values{};
@@ -109,7 +106,7 @@ void CitadelHub::initialize(std::function<bool(std::string_view)> open) {
 void CitadelHub::peer(bool selected) { retire_map_raid();settings_.invalidate_context(); selected_ = selected; shown_ = false; panel_ = "general"; message_.clear(); }
 void CitadelHub::game_state(int state) { retire_map_raid();settings_.invalidate_context(); in_game_ = state == GAMESTATE_INGAME; if (!in_game_) shown_ = false; }
 void CitadelHub::begin_zone() { retire_map_raid();settings_.invalidate_context(); in_game_ = false; shown_ = false; }
-void CitadelHub::pulse() { refresh_settings(); }
+void CitadelHub::pulse() { retire_map_raid(); refresh_settings(); }
 void CitadelHub::open(std::string_view panel) { shown_ = selected_ && in_game_; panel_ = std::string(panel); ++open_revision_; }
 void CitadelHub::report(std::string_view text) {
     message_ = std::string(text);

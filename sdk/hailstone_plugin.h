@@ -32,8 +32,8 @@
  *
  * Threads: the client calls the plugin on its own thread, and the host table is for that thread only, from inside
  * one of the plugin's callbacks (InitializePlugin, OnPulse, a command, a hook ...): the client's state has no locks.
- * A call from a thread the plugin started does nothing and returns 0 / NULL (a line in the log says so, once). A
- * plugin that works on a thread of its own hands its results over and acts on them in OnPulse.
+ * A call from a thread the plugin started does nothing and returns 0 / NULL (ability_state: -1), and a line in the
+ * log says so, once. A plugin that works on a thread of its own hands its results over and acts on them in OnPulse.
  *
  * Exceptions: a C++ plugin must not let an exception out of any function the client calls (callbacks, commands,
  * TLOs, hooks, UI functions). The client catches what it can and treats the call as unanswered (an exception out of
@@ -46,7 +46,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "hailstone_follow.h"
-#include "hailstone_raid.h"
 #include "hailstone_world_geometry.h"
 
 #ifdef __cplusplus
@@ -54,12 +53,6 @@ extern "C" {
 #endif
 
 #define HAILSTONE_PLUGIN_ABI 3
-/* Canonical host/hook layout, independent of optional service availability. Never reuse an ID for a changed
- * prefix. A future compatible host may recognize several published IDs. Size checks still gate optional tails. */
-#define HAILSTONE_PLUGIN_LAYOUT_ABI3_CANONICAL_1 UINT64_C(0xf6b34b37061be009)
-#define HAILSTONE_PLUGIN_LAYOUT_ABI3_CANONICAL_2 UINT64_C(0xe7faba7b569803ce)
-#define HAILSTONE_PLUGIN_LAYOUT_MODEL_SHA256 "e7faba7b569803ce8d17f96d44a13a2d25a969599ca1cefc2e54159110fe1f02"
-#define HAILSTONE_PLUGIN_LAYOUT HAILSTONE_PLUGIN_LAYOUT_ABI3_CANONICAL_2
 
 #if defined(_WIN32)
 #define HAILSTONE_EXPORT __declspec(dllexport)
@@ -206,10 +199,19 @@ typedef struct HS_Bulk_PetBuffData {
     int32_t duration;
     int32_t spellType;
 } HS_BulkPetBuffData;
-/* get_target_buff_data_bulk: an int32_t count of the current target's buffs the client holds, then one record per
- * buff, HAILSTONE_TARGET_BUFF_RECORD_SIZE fixed bytes each, immediately followed by casterNameLength bytes of the
- * caster's name (no NUL); the next record starts after them. As many whole records as fit follow the count, so fewer
- * records than the count means out_size cut the list short; below 4 bytes nothing is written (0 returned). */
+/* The header of a list-type bulk read (get_target_buff_data_bulk, get_avail_aa_data_bulk, get_avail_disc_data_bulk),
+ * HS_BULK_LIST_HEADER_SIZE bytes before the first record. Like HS_Bulk_RaidHeader's count and total, it states both
+ * how many records this buffer holds and how many the client has: count < total means out_size was too small to hold
+ * them all, so retry with a larger buffer. Below HS_BULK_LIST_HEADER_SIZE bytes nothing is written (0 returned); with
+ * nothing to list, the header alone goes out, count 0 and total 0. */
+typedef struct HS_Bulk_ListHeader {
+    int32_t count; /* records that follow in this buffer (as many whole records as fit) */
+    int32_t total; /* records the client holds, written or not */
+} HS_BulkListHeader;
+/* get_target_buff_data_bulk: an HS_Bulk_ListHeader for the current target's buffs, then one record per buff,
+ * HAILSTONE_TARGET_BUFF_RECORD_SIZE fixed bytes each, immediately followed by casterNameLength bytes of the caster's
+ * name (no NUL); the next record starts after them. As many whole records as fit follow the header, in order, none
+ * after the first that does not fit. */
 typedef struct HS_Bulk_TargetBuffFixedRecord {
     int32_t spellID;          /* the buff's spell; entries with no spell are not sent */
     int32_t duration;         /* tics left (the server's count less the 6 s ticks since); negative: permanent */
@@ -217,13 +219,26 @@ typedef struct HS_Bulk_TargetBuffFixedRecord {
     int32_t slot;             /* the target's buff slot, as the server sent it (EQEmu: the mob's own slot index) */
     int32_t casterNameLength; /* bytes of the caster's name that follow; 0 for none */
 } HS_BulkTargetBuffFixedRecord;
-/* get_avail_aa_data_bulk and get_avail_disc_data_bulk: an int32_t count, then `count` records, each an
+/* get_avail_aa_data_bulk and get_avail_disc_data_bulk: an HS_Bulk_ListHeader, then `count` records, each an
  * HAILSTONE_ID_NAME_RECORD (HAILSTONE_ID_NAME_RECORD_SIZE bytes) immediately followed by nameSize bytes of the name (no
- * NUL); the next record starts after them. */
+ * NUL); the next record starts after them. As many whole records as fit follow the header, in order. */
 typedef struct HAILSTONE_ID_NAME_RECORD {
     int32_t id;       /* an AA's ability (group) id, or a discipline's spell id */
     int32_t nameSize; /* bytes of the AA's or the discipline's name that follow; 0 when the client has none */
 } HAILSTONE_ID_NAME_RECORD;
+/* get_ability_data_bulk: an HS_Bulk_ListHeader, then `count` records, each an HS_Bulk_AbilityRecord
+ * (HAILSTONE_ABILITY_RECORD_SIZE bytes) immediately followed by nameSize bytes of the name (no NUL); the next record
+ * starts after them, in the Ability Book's order: the owned activated AAs, the listed disciplines, then the usable
+ * skills (the combat page's, then the abilities page's). Passive entries are not listed. Match an entry by (kind, id),
+ * not by its position. */
+typedef struct HS_Bulk_AbilityRecord {
+    int32_t kind;        /* HS_ABILITY_* */
+    int32_t id;          /* a skill's id, a discipline's spell id, or an AA's ability (group) id */
+    int32_t ready;       /* 1 its reuse has run out, 0 on reuse */
+    int64_t remainingMs; /* until it is ready, 0 when ready */
+    int64_t reuseMs;     /* its reuse time */
+    int32_t nameSize;    /* bytes of the name that follow, no NUL */
+} HS_BulkAbilityRecord;
 #pragma pack(pop)
 
 /* An extended target slot's type: HailstoneXTarget.type and HS_BulkXTargetData.targetType. The values are the
@@ -277,8 +292,8 @@ typedef struct HS_Bulk_XTargetData {
  * A reader steps from the first record at header.size by header.recordSize bytes, for header.count records. The
  * record may grow at its end in a later client: read recordSize, never a fixed stride, and read only the fields the
  * record's size covers. version changes only when an older reader can no longer read the header or a record at all.
- * reserved is the roster's total member count, so a caller whose buffer cut the roster short can see it from
- * count < reserved and retry with a larger one.
+ * total is the roster's member count, so a caller whose buffer cut the roster short can see it from count < total
+ * and retry with a larger one (the rule every list-type bulk read follows, HS_Bulk_ListHeader).
  *
  * A member not in this zone has spawnID 0 and no HP, position or pet (the percentages are -1, the rest 0); the
  * roster's level and class still answer. */
@@ -296,7 +311,7 @@ typedef struct HS_Bulk_RaidHeader {
     int32_t active;       /* in a raid */
     int32_t locked;
     int32_t lootType;     /* 1 Leader Only, 2 Leader and Group Leader, 3 Leader Selected, 4 Entire Raid */
-    uint32_t reserved;    /* the roster's total member count, not only those written */
+    uint32_t total;       /* the roster's member count, not only those written; count < total: buffer too small */
 } HS_BulkRaidHeader;
 
 typedef struct HS_Bulk_RaidData {
@@ -883,9 +898,9 @@ typedef struct PluginHostApi {
      * the mouse, and the keyboard once clicked. 1 while hovered. */
     int (*web_view)(void* host, uint32_t tab, float width, float height);
 
-    /* ---- added later in ABI 3: check HAILSTONE_HOST_HAS(field) before calling (an older client's table ends
-     * before; new entries go at the end, in order, never between these: a plugin built with an older header finds
-     * each by its position) ----
+    /* ---- added later in ABI 3: append only, in order, and check HAILSTONE_HOST_HAS(field) before calling (an older
+     * client's table ends before; new entries go at the end, never between these: a plugin built with an older header
+     * finds each by its position) ----
      * The bank window opens as a right click on a banker opens it (CBankWnd::Activate), here without that click's
      * class and range checks: `banker` a spawn id, 0 for the player itself (as the NMS patch's vault Bank button);
      * the window closes when that spawn is out of reach. 1 open (or already open), 0 not (HAILSTONE_CAP_ACTIONS). */
@@ -907,11 +922,29 @@ typedef struct PluginHostApi {
      * bytes written, or 0 when out_size cannot hold the header. Outside a raid the header says active 0, count 0.
      * Added later in ABI 3: test HAILSTONE_HOST_HAS(host, get_raid_data_bulk) first (HAILSTONE_CAP_READ). */
     int32_t (*get_raid_data_bulk)(void* host, unsigned char* out, int32_t out_size);
-    /* READ: copied current raid; stale revisions are refused. */
-    int (*get_raid_roster)(void* host, HailstoneRaidRoster* out);
-    int (*get_raid_member)(void* host, uint64_t revision, uint32_t index, HailstoneRaidMember* out);
-    /* READ + TARGET: exact current raid actor or a current member's pet. */
-    int (*select_raid_member)(void* host, uint64_t revision, uint32_t spawn_id, uint64_t incarnation);
+    /* Uses one of the player's abilities as its Ability Book row or hot button does (HAILSTONE_CAP_ACTIONS): 1 used,
+     * 0 not (the player has none such, it is passive, or the client refused it for the moment). `kind` is
+     * HS_ABILITY_*; `name` is what the Ability Book takes: a skill's name or number, a discipline's name with or
+     * without its rank, an AA's name or group id. Added later in ABI 3: test HAILSTONE_HOST_HAS(host, use_ability)
+     * first. */
+    int (*use_ability)(void* host, int kind, const char* name);
+    /* Whether that ability is ready (HAILSTONE_CAP_READ): 1 ready, 0 on reuse, -1 the player has none such, the client
+     * is not in a zone, the plugin lacks `read`, or it was called off the client's thread. When it is found,
+     * *remaining_ms and *reuse_ms are filled for both (either may be NULL). `kind` and `name` as use_ability's. Added
+     * later in ABI 3: test HAILSTONE_HOST_HAS(host, ability_state) first. */
+    int (*ability_state)(void* host, int kind, const char* name, int64_t* remaining_ms, int64_t* reuse_ms);
+    /* The Ability Book's entries in one call (HAILSTONE_CAP_READ): an HS_Bulk_ListHeader (count, total), then up to
+     * `count` HS_Bulk_AbilityRecord records, each followed by its name, as many whole records as fit. Every usable
+     * entry the book lists: the owned activated AAs, the disciplines and the skills, in its order. An entry's id is a
+     * skill's id, a discipline's spell id or an AA's ability (group) id; readiness is as ability_state's. Before the
+     * profile, or with no connection, count and total are 0; without `read`, 0 bytes. Below the header's size nothing
+     * is written; count < total means out_size was too small. Added later in ABI 3: test
+     * HAILSTONE_HOST_HAS(host, get_ability_data_bulk) first. */
+    int32_t (*get_ability_data_bulk)(void* host, unsigned char* out, int32_t out_size);
+    /* Targets a raid member in the zone, or a member's pet (HAILSTONE_CAP_READ and HAILSTONE_CAP_TARGET): spawn_id
+     * as get_raid_data_bulk's spawnID, incarnation as get_spawn's HailstoneSpawn.incarnation for it, so a spawn id
+     * reused since is refused. 1 targeted, 0 not. Added later in ABI 3: test HAILSTONE_HOST_HAS first. */
+    int (*select_raid_member)(void* host, uint32_t spawn_id, uint64_t incarnation);
     /* READ: local decoder, at most 256 KiB. READ + UI: local item inspector. */
     int (*decode_item_packet)(void* host, const void* data, size_t size, HailstoneItemSlot* slot, HailstoneItem* item);
     int (*inspect_item_packet)(void* host, const void* data, size_t size);
@@ -919,8 +952,11 @@ typedef struct PluginHostApi {
     int (*manual_follow)(void* host, const char* action);
     int (*get_follow_status)(void* host, HailstoneFollowStatus* out);
     uint32_t (*get_memorized_spell)(void* host, uint32_t index);
-    /* READ + ACTIONS: permission and current-revision checked native raid operations. */
-    int (*raid_action)(void* host, uint64_t revision, const char* name, uint32_t action, uint32_t group);
+    /* Asks the server to change the raid (HAILSTONE_CAP_READ and HAILSTONE_CAP_ACTIONS), as the raid window's
+     * leader does: HAILSTONE_RAID_MOVE puts the member `name` in `group`, as get_raid_data_bulk numbers groups (0..11,
+     * -1 ungrouped). Only the raid's leader, in a locked raid, to a group with room; 1 sent, 0 refused. The server
+     * decides; the roster changes when it says so. Added later in ABI 3: test HAILSTONE_HOST_HAS first. */
+    int (*raid_action)(void* host, const char* name, uint32_t action, int32_t group);
     uint64_t (*monotonic_ms)(void* host);
     uint32_t (*world_capabilities)(void* host);
     /* Highest upward drawn opaque/masked surface at or below seed_z (the caller's
@@ -945,6 +981,12 @@ typedef struct PluginHostApi {
     /* READ. Current aggregate map policy. Initialize out->size; zero flags is stock. */
     int (*get_map_policy)(void* host, HailstoneMapPolicy* out);
 } PluginHostApi;
+/* What use_ability and ability_state take: the kinds of ability the Ability Book lists. The values are stable. */
+enum HS_AbilityKinds {
+    HS_ABILITY_SKILL = 0,      /* a skill (Bash, Kick, ...) */
+    HS_ABILITY_DISCIPLINE = 1, /* a combat ability (a discipline) */
+    HS_ABILITY_ALT = 2         /* an activated alternate ability */
+};
 /* Not known: it was on the cursor at zone-in, replaced a cursor item, or came by a path the client does not mark.
  * Treat it as the player's; never destroy it unattended. */
 #define HAILSTONE_CURSOR_ORIGIN_UNKNOWN 0
@@ -966,6 +1008,10 @@ typedef struct PluginHostApi {
 #define HS_BULK_XTARGET_RECORD_SIZE 16
 #define HAILSTONE_TARGET_BUFF_RECORD_SIZE 20
 #define HAILSTONE_ID_NAME_RECORD_SIZE 8
+#define HAILSTONE_ABILITY_RECORD_SIZE 32 /* get_ability_data_bulk's fixed part, before the name */
+#define HS_BULK_LIST_HEADER_SIZE 8 /* HS_Bulk_ListHeader */
+/* raid_action's actions. */
+#define HAILSTONE_RAID_MOVE 1u /* move a member to another group, or out of every group */
 /* Whether this client's host table has `field` (one added after the plugin's ABI) and it is set. */
 #define HAILSTONE_HOST_HAS(h, field)                                                                                   \
     ((h) && (h)->size >= offsetof(PluginHostApi, field) + sizeof((h)->field) && (h)->field)
@@ -974,9 +1020,7 @@ typedef struct PluginHostApi {
 /* ---- what a plugin exports (all optional but the first two, which HAILSTONE_PLUGIN defines; declare each with
  * HAILSTONE_API so a C++ plugin exports it under its C name) ----
  *   uint32_t hailstone_plugin_abi(void);                     returns HAILSTONE_PLUGIN_ABI
- *   uint64_t hailstone_plugin_layout(void);                 canonical layout ID
- *   int hailstone_plugin_set_host_v2(const PluginHostApi* h, uint64_t layout); called first; 1 accepts
- * Older released plugins may instead export void hailstone_plugin_set_host(const PluginHostApi* h).
+ *   void hailstone_plugin_set_host(const PluginHostApi* h);  called first
  *   void InitializePlugin(void);  void ShutdownPlugin(void);
  *   void OnPulse(void);           void SetGameState(int state);
  *   void OnBeginZone(void);       void OnEndZone(void);    void OnZoned(void);
@@ -988,10 +1032,9 @@ typedef struct PluginHostApi {
  *   const HailstoneHooks* hailstone_plugin_hooks(void);
  *                                   (ABI 2, HAILSTONE_CAP_EXTEND; read once after InitializePlugin)
  *
- * Released plugins may use the earlier nmsc_plugin_* names; the loader recognizes them too. New HAILSTONE_PLUGIN
- * builds retain the existing ABI alias and use hailstone layout/versioned binding exports, omitting the old setter.
- * A host that does not understand layout negotiation must refuse the plugin before initialization. Hook exports retain their
- * existing optional name compatibility.
+ * Up to 0.6 the three hailstone_plugin_* exports were named nmsc_plugin_*. The client takes either name;
+ * HAILSTONE_PLUGIN exports both, so the plugin also loads in those clients. A plugin with hooks that should work in
+ * them exports nmsc_plugin_hooks too (returning the same table).
  */
 
 
@@ -999,19 +1042,14 @@ typedef struct PluginHostApi {
 
 extern const PluginHostApi* host;
 
-/* In one source file: the layout-checked exports and `host` global. The old unversioned setter is deliberately
- * absent: an older host must refuse this SDK rather than bind a table with an incompatible optional-tail order. */
+/* In one source file of the plugin: the two required exports (under both names, see above) and the `host`
+ * global. */
 #define HAILSTONE_PLUGIN                                                                                               \
     HAILSTONE_HOST_GLOBAL                                                                                              \
     HAILSTONE_API uint32_t hailstone_plugin_abi(void) { return HAILSTONE_PLUGIN_ABI; }                                 \
-    HAILSTONE_API uint64_t hailstone_plugin_layout(void) { return HAILSTONE_PLUGIN_LAYOUT; }                           \
-    HAILSTONE_API int hailstone_plugin_set_host_v2(const PluginHostApi* h, uint64_t layout) {                           \
-        if (!h || layout != HAILSTONE_PLUGIN_LAYOUT || h->size < offsetof(PluginHostApi, get_raid_roster)) {            \
-            host = 0; return 0;                                                                                       \
-        }                                                                                                            \
-        host = h; return 1;                                                                                           \
-    }                                                                                                                \
-    HAILSTONE_API uint32_t nmsc_plugin_abi(void) { return HAILSTONE_PLUGIN_ABI; }
+    HAILSTONE_API void hailstone_plugin_set_host(const PluginHostApi* h) { host = h; }                                 \
+    HAILSTONE_API uint32_t nmsc_plugin_abi(void) { return HAILSTONE_PLUGIN_ABI; }                                      \
+    HAILSTONE_API void nmsc_plugin_set_host(const PluginHostApi* h) { host = h; }
 
 /* MQ-style helpers over `host` (plain C). */
 #include <stdarg.h>

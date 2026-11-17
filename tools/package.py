@@ -9,10 +9,10 @@ import tempfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
-p.add_argument('--client', type=pathlib.Path, required=True, help='Patched Hailstone checkout')
+p.add_argument('--client', type=pathlib.Path, required=True, help='Hailstone checkout with tools/make_addon.py')
 p.add_argument('--build', type=pathlib.Path, default=root / 'build')
 p.add_argument('--platform', required=True)
-p.add_argument('--version', default='0.1.0-preview.2')
+p.add_argument('--version', default='0.1.0-preview.3')
 p.add_argument('--out', type=pathlib.Path, default=root / 'release')
 a = p.parse_args()
 build = a.build.resolve()

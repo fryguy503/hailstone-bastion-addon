@@ -27,13 +27,18 @@ struct Rig {
     std::uint32_t technique=0;
     std::int32_t tracking_skill=50;
     bool player_available=true, spawn_available=true;
-    std::vector<HailstoneRaidMember> raid;
-    std::uint64_t raid_revision=17;
-    unsigned roster_reads=0, member_reads=0, player_reads=0, directory_reads=0;
-    bool roster_available=true;
-    int failed_member=-1, truncated_member=-1;
+    struct RaidMember {
+        std::uint32_t spawn_id;
+        std::uint64_t incarnation;
+        std::string_view roster_name = "FixtureRaider";
+        std::string_view spawn_name = "fixturerAider";
+    };
+    std::vector<RaidMember> raid;
+    unsigned roster_reads=0, player_reads=0, directory_reads=0;
+    bool roster_available=true, partial_roster=false;
+    std::uint32_t failed_member=0, truncated_member=0;
     std::function<void(Rig&)> on_roster;
-    std::function<void(Rig&,std::uint32_t)> on_member;
+    std::function<void(Rig&)> on_member;
     std::vector<std::byte> packet;
     std::uint16_t opcode=0;
     HailstoneUiFn ui=nullptr;
@@ -46,22 +51,46 @@ struct Rig {
         me.size=sizeof(me); me.id=1; me.incarnation=1;
         api.character_config_dir=[](void* h,char* out,std::size_t n) { auto& r=*static_cast<Rig*>(h);++r.directory_reads;auto s=r.directory.generic_string(); if(n<=s.size()) return 0; std::memcpy(out,s.c_str(),s.size()+1); return static_cast<int>(s.size()); };
         api.get_player=[](void* h,HailstonePlayer* p) { auto& r=*static_cast<Rig*>(h);++r.player_reads;if(!r.player_available)return 0; *p=r.player; return 1; };
-        api.get_spawn=[](void* h,std::uint32_t id,HailstoneSpawn* s) { const auto& r=*static_cast<Rig*>(h); if(id!=1||!r.spawn_available) return 0; *s=r.me; return 1; };
+        api.get_spawn=[](void* h,std::uint32_t id,HailstoneSpawn* s) {
+            auto& r=*static_cast<Rig*>(h);
+            if (id==r.me.id) {
+                if (!r.spawn_available) return 0;
+                *s=r.me;
+                return 1;
+            }
+            if (const auto callback=r.on_member) callback(r);
+            const auto member=std::ranges::find(r.raid,id,&RaidMember::spawn_id);
+            if (member==r.raid.end() || id==r.failed_member) return 0;
+            *s={};
+            s->size=id==r.truncated_member ? offsetof(HailstoneSpawn,incarnation) : sizeof(*s);
+            s->id=id;
+            s->incarnation=member->incarnation;
+            std::copy_n(member->spawn_name.data(),std::min(member->spawn_name.size(),sizeof(s->name)-1),s->name);
+            return 1;
+        };
         api.skill=[](void* h,std::uint32_t id) { return id==53 ? static_cast<Rig*>(h)->tracking_skill : 0; };
-        api.get_raid_roster=[](void* h,HailstoneRaidRoster* out) {
+        api.get_raid_data_bulk=[](void* h,unsigned char* out,std::int32_t capacity) {
             auto& r=*static_cast<Rig*>(h);++r.roster_reads;
             if (const auto callback=r.on_roster) callback(r);
             if (!r.roster_available) return 0;
-            out->size=sizeof(*out);out->revision=r.raid_revision;
-            out->owner_incarnation=r.me.incarnation;out->count=static_cast<std::uint32_t>(r.raid.size());return 1;
-        };
-        api.get_raid_member=[](void* h,std::uint64_t revision,std::uint32_t index,HailstoneRaidMember* out) {
-            auto& r=*static_cast<Rig*>(h);++r.member_reads;
-            if (const auto callback=r.on_member) callback(r,index);
-            if(revision!=r.raid_revision||index>=r.raid.size()||static_cast<int>(index)==r.failed_member)return 0;
-            *out=r.raid[index];
-            if (static_cast<int>(index)==r.truncated_member) out->size=offsetof(HailstoneRaidMember,incarnation);
-            return 1;
+            HS_BulkRaidHeader header{};
+            header.size=sizeof(header);
+            header.version=1;
+            header.recordSize=sizeof(HS_BulkRaidData);
+            header.total=static_cast<std::uint32_t>(r.raid.size());
+            header.count=header.total-(r.partial_roster && header.total ? 1u : 0u);
+            header.active=header.total>0;
+            const auto length=static_cast<std::int32_t>(header.size+header.count*header.recordSize);
+            if (length>capacity) return 0;
+            std::memcpy(out,&header,sizeof(header));
+            for (std::uint32_t index=0;index<header.count;++index) {
+                HS_BulkRaidData record{};
+                record.spawnID=r.raid[index].spawn_id;
+                const auto name=r.raid[index].roster_name;
+                std::copy_n(name.data(),std::min(name.size(),sizeof(record.name)-1),record.name);
+                std::memcpy(out+header.size+index*header.recordSize,&record,sizeof(record));
+            }
+            return length;
         };
         api.get_memorized_spell=[](void* h,std::uint32_t index) { return index==0 ? static_cast<Rig*>(h)->technique : 0u; };
         api.add_ui_function=[](void* h,const char*,HailstoneUiFn fn,void* owner) {
@@ -179,8 +208,8 @@ void map_filters_and_social_visibility() {
     actor.id=20;actor.in_group=1;
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"ordinary group visibility depended on Tracking");
     actor.in_group=0;
-    HailstoneRaidMember member{};member.size=sizeof(member);member.spawn_id=actor.id;member.incarnation=actor.incarnation;
-    r.raid.push_back(member);
+    r.raid.push_back({actor.id,actor.incarnation});
+    r.hub.pulse();
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"current raid member visibility depended on Tracking");
     HailstoneMapSpawn mark{};mark.size=sizeof(mark);
     check(r.hub.map_spawn(&actor,&mark)==1&&std::string(mark.label)=="MapFixture","raid marker lost its current member label");
@@ -198,10 +227,7 @@ void map_filters_and_social_visibility() {
 }
 HailstoneSpawn raid_fixture(Rig& r) {
     r.player.class_id=2;
-    for (std::uint32_t index=0;index<72;++index) {
-        HailstoneRaidMember member{};member.size=sizeof(member);
-        member.spawn_id=100+index;member.incarnation=1000+index;r.raid.push_back(member);
-    }
+    for (std::uint32_t index=0;index<72;++index) r.raid.push_back({100+index,1000+index});
     auto actor=map_actor();actor.is_npc=0;actor.id=100;actor.incarnation=1000;
     return actor;
 }
@@ -213,38 +239,41 @@ void map_raid_cache_scaling() {
         check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==(index<72?1:0),"cached raid membership changed marker admission");
         check(r.hub.map_spawn(&actor,&mark)==(index<72?1:0),"cached raid membership changed marker painting");
     }
-    check(r.member_reads==72,"unchanged markers fetched the raid members more than once per revision");
-    check(r.roster_reads>=800,"cached markers skipped current host roster revalidation");
+    check(r.roster_reads==1,"unchanged markers fetched the bulk roster more than once per pulse");
     actor.id=100;actor.incarnation=1000;
-    ++r.raid_revision;r.raid[0].incarnation=5000;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0&&r.member_reads==144,"changed roster retained an old actor incarnation");
+    r.raid[0].incarnation=5000;r.hub.pulse();
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0&&r.roster_reads==2,"changed roster retained an old actor incarnation");
     actor.incarnation=5000;
-    check(r.hub.map_spawn(&actor,&mark)==1&&r.member_reads==144,"new actor incarnation did not reuse the refreshed display snapshot");
+    check(r.hub.map_spawn(&actor,&mark)==1&&r.roster_reads==2,"new actor incarnation did not reuse the refreshed display snapshot");
     ++actor.incarnation;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0&&r.member_reads==144,"same-ID replacement matched cached raid membership");
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0&&r.roster_reads==2,"same-ID replacement matched cached raid membership");
+    actor.incarnation=5000;r.raid[0].spawn_name="OtherPlayer";r.hub.pulse();
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"reused spawn ID matched a different raid name");
+    actor.id=101;actor.incarnation=1001;
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"name mismatch hid an unrelated valid raid member");
 }
 void map_raid_cache_lifetime() {
     Rig r;auto actor=raid_fixture(r);
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"raid fixture unavailable");
-    auto reads=r.member_reads;
+    auto reads=r.roster_reads;
     ++r.me.incarnation;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"new raid owner reused the prior owner snapshot");
-    reads=r.member_reads;++r.player.zone_id;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"new zone reused the old display snapshot");
-    reads=r.member_reads;++r.player.zone_instance;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"new zone instance reused the old display snapshot");
-    reads=r.member_reads;r.hub.peer(false);
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"new raid owner reused the prior owner snapshot");
+    reads=r.roster_reads;++r.player.zone_id;
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"new zone reused the old display snapshot");
+    reads=r.roster_reads;++r.player.zone_instance;
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"new zone instance reused the old display snapshot");
+    reads=r.roster_reads;r.hub.peer(false);
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==-1,"inactive peer retained a map veto");
     r.hub.peer(true);
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"peer activation reused a retired display snapshot");
-    reads=r.member_reads;r.hub.game_state(GAMESTATE_CHARSELECT);
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"peer activation reused a retired display snapshot");
+    reads=r.roster_reads;r.hub.game_state(GAMESTATE_CHARSELECT);
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"character selection retained raid marker admission");
     r.hub.game_state(GAMESTATE_INGAME);
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"game-state transition reused a retired display snapshot");
-    reads=r.member_reads;r.hub.begin_zone();r.hub.game_state(GAMESTATE_INGAME);
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"zone transition reused a retired display snapshot");
-    reads=r.member_reads;r.hub.set_host(&r.api);r.hub.peer(true);r.hub.game_state(GAMESTATE_INGAME);
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"host rebinding reused a retired display snapshot");
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"game-state transition reused a retired display snapshot");
+    reads=r.roster_reads;r.hub.begin_zone();r.hub.game_state(GAMESTATE_INGAME);
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"zone transition reused a retired display snapshot");
+    reads=r.roster_reads;r.hub.set_host(&r.api);r.hub.peer(true);r.hub.game_state(GAMESTATE_INGAME);
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"host rebinding reused a retired display snapshot");
     r.player_available=false;
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"cached raid bypassed missing player context");
     r.player_available=true;r.spawn_available=false;
@@ -255,48 +284,49 @@ void map_raid_cache_lifetime() {
 void map_raid_cache_failures() {
     Rig r;auto actor=raid_fixture(r);
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"raid fixture unavailable");
-    r.roster_available=false;
+    r.roster_available=false;r.hub.pulse();
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"cached raid bypassed a failed roster read");
-    auto reads=r.member_reads;r.roster_available=true;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"failed roster read did not retire the snapshot");
-    ++r.raid_revision;r.failed_member=3;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"partial member reads published raid admission");
-    reads=r.member_reads;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0&&r.member_reads==reads+4,"partial fill was reused as a complete snapshot");
-    r.failed_member=-1;reads=r.member_reads;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"complete retry did not rebuild the failed snapshot");
-    ++r.raid_revision;r.truncated_member=3;
+    auto reads=r.roster_reads;r.roster_available=true;r.hub.pulse();
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"failed roster read did not retire the snapshot");
+    r.partial_roster=true;r.hub.pulse();
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"a partial bulk roster published raid admission");
+    reads=r.roster_reads;
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0&&r.roster_reads==reads,"a partial roster was retried per actor");
+    r.partial_roster=false;r.hub.pulse();
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"complete retry did not rebuild the failed snapshot");
+    r.failed_member=r.raid[3].spawn_id;r.hub.pulse();
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"unavailable member identity published raid admission");
+    r.failed_member=0;r.truncated_member=r.raid[3].spawn_id;r.hub.pulse();
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"truncated member identity published raid admission");
-    r.truncated_member=-1;r.raid[3].incarnation=0;
+    r.truncated_member=0;r.raid[3].incarnation=0;r.hub.pulse();
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"incomplete member identity published raid admission");
-    r.raid[3].incarnation=1003;
-    const auto final_read=r.roster_reads+2;
-    r.on_roster=[final_read](Rig& host) { if (host.roster_reads==final_read) ++host.raid_revision; };
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"roster changed during fill but the snapshot was published");
-    r.on_roster={};reads=r.member_reads;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"inconsistent fill survived the final roster check");
+    r.raid[3].incarnation=1003;r.hub.pulse();
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"a valid snapshot did not recover from invalid identity");
+    r.raid[3].spawn_id=r.raid[2].spawn_id;r.hub.pulse();
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"duplicate member IDs published raid admission");
     // Losing roster access only removes raid-based admission, not independent group/Tracking permissions.
-    r.roster_available=false;r.player.class_id=4;
+    r.roster_available=false;r.player.class_id=4;r.hub.pulse();
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"roster failure denied an independently eligible tracker PC marker");
     r.player.class_id=2;actor.in_group=1;
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==1,"raid display cache changed ordinary group Find");
 }
 void map_raid_cache_reentrancy() {
     Rig r;auto actor=raid_fixture(r);
-    r.on_member=[](Rig& host,std::uint32_t index) {
-        if (index) return;
+    r.on_member=[](Rig& host) {
         host.on_member={};host.hub.peer(false);host.hub.peer(true);
     };
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"lifecycle reentry published the retired member fill");
-    auto reads=r.member_reads;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"retired fill was retained after lifecycle reentry");
+    auto reads=r.roster_reads;
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"retired fill was retained after lifecycle reentry");
+    r.hub.pulse();
     r.on_roster=[actor](Rig& host) {
         host.on_roster={};
         check(host.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"recursive lookup admitted a partial cached roster");
     };
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"recursive roster callback did not invalidate outer admission");
-    reads=r.member_reads;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.member_reads==reads+72,"recursive query retained the superseded snapshot");
+    reads=r.roster_reads;
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1&&r.roster_reads==reads+1,"recursive query retained the superseded snapshot");
+    r.hub.pulse();
     r.on_roster=[](Rig& host) { host.on_roster={};host.hub.begin_zone(); };
     HailstoneMapSpawn mark{};mark.size=sizeof(mark);
     check(r.hub.map_spawn(&actor,&mark)==0,"zoning during a roster query painted a retired marker");
@@ -348,8 +378,9 @@ void map_group_filter_and_find() {
     check(r.hub.command("maps group off"),"nontracker could not configure group markers");
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"disabled group marker escaped through nontracker policy");
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==1,"group marker filter disabled group Find/navigation");
-    HailstoneRaidMember member{};member.size=sizeof(member);member.spawn_id=actor.id;member.incarnation=actor.incarnation;
+    const auto member=Rig::RaidMember{actor.id,actor.incarnation};
     r.raid.push_back(member);
+    r.hub.pulse();
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"raid preference reintroduced a hidden group member");
     r.me.is_gm=1;
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"GM bypass reintroduced a hidden group member");

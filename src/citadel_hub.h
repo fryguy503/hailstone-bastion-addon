@@ -34,9 +34,10 @@ private:
     void retire_map_raid() const;
     bool map_raid_member(const HailstoneSpawn&, const HailstonePlayer&, const HailstoneSpawn&) const;
     struct MapRaid {
-        std::uint64_t revision = 0, owner = 0;
-        std::uint32_t player = 0, zone = 0, instance = 0, source_count = 0;
-        std::array<std::pair<std::uint32_t,std::uint64_t>,72> actors{};
+        using Actor = std::pair<std::uint32_t, std::uint64_t>;
+        std::uint64_t owner = 0;
+        std::uint32_t player = 0, zone = 0, instance = 0;
+        std::array<Actor, 72> actors{};
         std::size_t count = 0;
     };
     mutable MapRaid map_raid_;

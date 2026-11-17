@@ -1,8 +1,19 @@
 # Preview validation — 2026-11-17
 
+## Preview 3 on upstream Hailstone
+
+Windows x64 MSVC passed all 31 add-on suites with warnings treated as errors. These include native
+tests and all 12 Lua suites using the Modern and Gamepad files from upstream `6446875a`.
+
+An offline smoke test linked against that commit's Windows engine and used the Bastion server policy.
+The loader reproduced Preview 2's missing entry point error. It loaded Preview 3 with native approval
+and recognized the required plugin both during world login and when first loaded in a synthetic zone.
+The smoke test checked `/bastion`, both UI pack registrations, map ownership and the bulk raid roster.
+Live login, gameplay and server integrity approval remain unverified for this build.
+
 ## Performance and UI correction
 
-The optimized addon keeps the exact Canonical 2 SDK bytes/layout documented below and works through
+Preview 2 keeps the Canonical 2 SDK bytes/layout documented below and works through
 the published Canonical 3 host's automatic typed compatibility view. No ABI override is required.
 
 | Check | Result |
@@ -33,7 +44,7 @@ profile completeness here refers to login identity and writable settings paths.
 
 ## Earlier preview validation — 2026-11-16
 
-The current addon targets Canonical 2 SDK commit `c55bfccd`, tree `166baf23`, on upstream `843b6e46`.
+That preview targets Canonical 2 SDK commit `c55bfccd`, tree `166baf23`, on upstream `843b6e46`.
 Header SHA256 is `673a348cad651775ae74741a718cd5c3f0230a035e1cafa3eaabe640aa4eb9d6`;
 layout `0xe7faba7b569803ce` has 106 members, 103 function slots and 840 bytes on Windows x64.
 The released raid-bulk field precedes the addon services. The prior marked F6 view remains separate.
