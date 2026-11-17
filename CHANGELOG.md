@@ -1,0 +1,41 @@
+# Changes
+
+## 0.1.0-preview.2
+
+- Removed repeated raid-member enumeration from map filtering while retaining fresh roster and actor checks.
+- Avoided full state generation for hidden windows and disabled raid bars, and removed repeated settings-directory filesystem work.
+- Retired stale panel state on zoning/logout and kept character settings isolated across reconnects and failed path resolution.
+- Fixed the raid overlay on hosts missing the optional scrollbar flag; shortened and ordered manager actions.
+- Wrapped action and review buttons cleanly in both UI packs, including narrow windows and differing UI scales.
+- Stacked narrow browser panes and made home-city details and choices readable at smaller widths.
+- Added native performance measurements and regression coverage; the reported live Inventory timeout remains under investigation.
+
+## 0.1.0-preview.1
+
+- Rebuilt against Canonical 2 of the public SDK after the released raid-bulk field was added.
+  Current and prior marked layouts use separate typed host views.
+
+- Added compact map-local filters shared with Bastion settings, including an independent group-member toggle.
+  Tracking permissions still apply, self remains visible, and explicit filters also work for GMs.
+
+- Migrated to the canonical ABI 3 SDK layout, preserving four released bulk-reader slots before the addon services.
+  The DLL uses layout negotiation and a versioned host setter; older clients refuse it before initialization.
+
+- Claimed Bastion map ownership, disabling stock NPC overlays and NPC Find while preserving terrain,
+  labels, pins and stock preferences on other servers. Existing NPC Find walks stop when blocked.
+- Tightened the hub's Tools and Settings layouts with compact groups, shorter labels and optional binary details.
+- Integrated the modular `hs.UI` facade and owned stock-window extensions in both UI packs.
+- Added a standalone Bastion plugin with Modern and Gamepad Lua windows.
+- Added `/bastion` tools, settings and a searchable server command catalog.
+- Added negotiated executable/addon integrity reporting, explicit server acknowledgement status
+  and tools to prepare the corresponding server integration and binary-pair approval.
+- Added follow, optional right-click selling, tracking map policy, native raid bars, factions,
+  saved expeditions and delegates, pet gear, Kinbound, gear ratings, home-city selection,
+  encounter telegraphs, Firefell context and server shortcuts.
+- Refined telegraphs with a shared role palette, fine semantic glyphs, compact impact clocks
+  and surface-boundary clipping over rendered terrain, small props and stair treads.
+- Improved raid layouts and retained unknown-state and stale-identity checks across roster
+  and equipment actions.
+- Added raid-manager List, Grant and Revoke buttons to the stock Raid window and raid-bar settings,
+  with current-roster selection, explicit grant/revoke review and server confirmation in chat.
+- Kept Sentinel, nameplates, spell-ID expansion and Item Search outside this addon.

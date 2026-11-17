@@ -1,0 +1,5 @@
+/build*/
+/release/
+/artifacts/
+*.pending.*
+*.previous

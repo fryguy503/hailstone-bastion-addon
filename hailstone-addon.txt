@@ -1,0 +1,9 @@
+hailstone-addon 1
+name bastion
+kind plugin
+version 0.1.0-preview.2
+min_client 0.7.1-beta
+author Fryguy
+description Bastion server tools, settings, raid bars and encounter displays.
+caps read,commands,target,actions,move,chat,events,ui,packets,extend,login
+package windows-x64 906890 2435ddcfd90d44b714e01ff4b1ea03b6584642f3d7aa3fbdc33470004d520e9f bastion-0.1.0-preview.2-windows-x64.zip
