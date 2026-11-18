@@ -8,11 +8,15 @@ extern "C" void InitializePlugin();
 extern "C" void ShutdownPlugin();
 extern "C" void SetGameState(int);
 extern "C" void OnBeginZone();
+extern "C" void OnPulse();
 extern "C" int OnPacket(int,int,HailstonePacket*);
 extern "C" const HailstoneHooks* hailstone_plugin_hooks();
 using namespace citadel_test;
 struct HailstoneArgs { std::vector<HailstoneValue> values; };
-struct HailstoneOut { std::string key,panel; bool shown=false; };
+struct HailstoneOut {
+    std::string key,panel,status,checksum;
+    bool shown=false,requires_reconnect=false,legacy_submitted=false,accepted=false;
+};
 int legacy_map_policy_read(HailstoneMapPolicy* out,std::size_t prefix) {
     if(!out||out->size<sizeof(out->size))return 0;
     const auto caller_size=out->size;
@@ -76,6 +80,11 @@ int main() { try {
     h.api.out_value=[](void*,HailstoneOut* out,const HailstoneValue* value) {
         if(out->key=="panel" && value->kind==HAILSTONE_STRING) out->panel=value->s;
         if(out->key=="shown" && value->kind==HAILSTONE_BOOL) out->shown=value->i!=0;
+        if(out->key=="status" && value->kind==HAILSTONE_STRING) out->status=value->s;
+        if(out->key=="legacy_checksum" && value->kind==HAILSTONE_STRING) out->checksum=value->s;
+        if(out->key=="requires_reconnect" && value->kind==HAILSTONE_BOOL) out->requires_reconnect=value->i!=0;
+        if(out->key=="legacy_submitted" && value->kind==HAILSTONE_BOOL) out->legacy_submitted=value->i!=0;
+        if(out->key=="accepted" && value->kind==HAILSTONE_BOOL) out->accepted=value->i!=0;
     };
     for(const auto* destination:{"settings","commands","tools"}) {
         HailstoneValue operation{},argument{}; operation.kind=argument.kind=HAILSTONE_STRING; operation.s="open"; argument.s=destination;
@@ -254,6 +263,67 @@ int main() { try {
     p.opcode=0x578f;
     check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&p)==0&&!active()&&measurements==2&&h.sent.empty(),
           "legacy login fallback accepted an unrelated endpoint");
+    ShutdownPlugin();
+
+    const auto integrity_state=[&] {
+        HailstoneValue operation{};operation.kind=HAILSTONE_STRING;operation.s="state";
+        HailstoneArgs args{{operation}};HailstoneOut out;
+        const auto function=h.functions.at("integrity");
+        check(function.fn(function.self,&args,&out)==1,"integrity state callback became unavailable");
+        return out;
+    };
+    const auto world_out=[&](std::uint16_t opcode,Bytes& body) {
+        const auto original_body=body;
+        HailstonePacket outgoing{opcode,reinterpret_cast<std::uint8_t*>(body.data()),body.size()};
+        const auto original_packet=outgoing;
+        check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&outgoing)==0&&body==original_body&&
+              outgoing.opcode==original_packet.opcode&&outgoing.data==original_packet.data&&outgoing.size==original_packet.size,
+              "integrity login routing consumed or modified the caller's original WORLD packet");
+    };
+    const auto announce=[&] {
+        Bytes announcement(560);text(announcement,36,"Bastion");
+        HailstonePacket incoming{0x7ceb,reinterpret_cast<std::uint8_t*>(announcement.data()),announcement.size()};
+        check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_IN,&incoming)==0,"integrity routing consumed WORLD announcement");
+    };
+    server={"login.bastiongame.com","Bastion - Production",true};
+    InitializePlugin();h.sent.clear();const auto late_measurements=measurements;
+    check(active()&&integrity_state().requires_reconnect&&!integrity_state().legacy_submitted,
+          "late in-zone load did not expose its missed fresh-login checkpoint");
+    Bytes login(464);put(login,188,1,1);Bytes enter;
+    world_out(0x7a09,login);SetGameState(GAMESTATE_PRECHARSELECT);announce();
+    world_out(0x578f,enter);SetGameState(GAMESTATE_INGAME);h.now+=10000;OnPulse();
+    check(measurements==late_measurements&&h.sent.empty()&&integrity_state().requires_reconnect,
+          "late-load zoning fallback sent an integrity report that WORLD will ignore during transfer");
+    put(login,188,0,1);world_out(0x7a09,login);SetGameState(GAMESTATE_PRECHARSELECT);announce();
+    world_out(0x0f13,checksum);SetGameState(GAMESTATE_INGAME);
+    const auto fresh=integrity_state();
+    check(measurements==late_measurements+1&&h.sent.size()==1&&fresh.legacy_submitted&&!fresh.requires_reconnect&&
+          !fresh.accepted&&fresh.checksum=="81985529216486895",
+          "returning through full login did not submit and expose the exact calling-addon checksum");
+    for(unsigned n=0;n<3;++n) {
+        put(login,188,1,1);world_out(0x7a09,login);SetGameState(GAMESTATE_PRECHARSELECT);announce();
+        world_out(0x578f,enter);SetGameState(GAMESTATE_INGAME);h.now+=10000;OnPulse();
+        const auto current=integrity_state();
+        check(measurements==late_measurements+1&&h.sent.size()==1&&current.legacy_submitted&&
+              !current.requires_reconnect&&!current.accepted&&current.checksum==fresh.checksum&&current.status==fresh.status,
+              "ordinary zoning retired, rehashed or retransmitted the original fresh-login receipt");
+    }
+    // Only the exact wire record and its actual zoning byte may preserve a receipt.
+    for(const std::size_t size:{std::size_t{0},std::size_t{188},std::size_t{189},std::size_t{463}}) {
+        Bytes truncated_login(size);
+        if(size>188)put(truncated_login,188,1,1);
+        const auto old_measurements=measurements;
+        const auto old_sent=h.sent.size();
+        world_out(0x7a09,truncated_login);announce();world_out(0x0f13,checksum);
+        check(measurements==old_measurements+1&&h.sent.size()==old_sent+1,
+              "an absent/truncated LoginInfo record was misread as a zoning login");
+    }
+    login.assign(464,std::byte{});put(login,187,1,1);
+    const auto old_measurements=measurements;
+    const auto old_sent=h.sent.size();
+    world_out(0x7a09,login);announce();world_out(0x0f13,checksum);
+    check(measurements==old_measurements+1&&h.sent.size()==old_sent+1,
+          "a byte outside LoginInfo.zoning preserved an earlier login's receipt");
     ShutdownPlugin();
     std::cout<<checks<<" plugin checks passed\n"; return 0;
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; } }

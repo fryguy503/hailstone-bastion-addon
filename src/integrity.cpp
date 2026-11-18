@@ -13,6 +13,7 @@ const char* label(Status status) {
     case Status::Unsupported:return "Unsupported";case Status::Malformed:return "Server reported malformed data";
     case Status::TimedOut:return "Acknowledgement timed out";case Status::Failed:return "Report unavailable";
     case Status::LegacyQueued:return "Legacy DLL report queued";case Status::LegacySubmitted:return "Legacy DLL report submitted";
+    case Status::ReconnectRequired:return "Reconnect required";
     }
     return "Unavailable";
 }
@@ -26,17 +27,40 @@ void Adapter::reset_legacy() {
 }
 void Adapter::set_host(const PluginHostApi* host) {
     if(HAILSTONE_HOST_HAS(host_,remove_ui_function)) host_->remove_ui_function(host_->host,"integrity");
-    host_=host;selected_=false;has_clock_=false;seen_count_=0;reset_legacy();retire(Status::Inactive,"");
+    host_=host;selected_=false;has_clock_=false;world_zoning_=false;seen_count_=0;reset_legacy();retire(Status::Inactive,"");
 }
 void Adapter::initialize() {
     if(HAILSTONE_HOST_HAS(host_,add_ui_function)) host_->add_ui_function(host_->host,"integrity",callback,this);
 }
 void Adapter::peer(bool value) {
-    selected_=value;has_clock_=false;seen_count_=0;reset_legacy();
+    selected_=value;
+    // A zoning WORLD link belongs to the same login. Its server ignores integrity
+    // packets: retain the original receipt rather than claiming a new submission.
+    if(world_zoning_) return;
+    has_clock_=false;seen_count_=0;reset_legacy();
     retire(value?Status::Waiting:Status::Inactive,value?"Waiting for Bastion's binary integrity challenge.":"");
 }
+void Adapter::world_login(bool zoning) {
+    world_zoning_=zoning;
+    if(!zoning) {peer(false);return;}
+    ++generation_;
+    finish_world_login();
+}
+void Adapter::finish_world_login() {
+    const bool pending=legacy_pending_||status_==Status::Measuring||status_==Status::Queued||
+        status_==Status::Sending||status_==Status::Sent;
+    legacy_pending_=legacy_sending_=false;
+    if(pending) {
+        retire(Status::ReconnectRequired,"The world login ended before verification completed. Return to the login screen and reconnect.");
+    } else if(!native_protocol_&&!legacy_attempted_) {
+        status_=Status::ReconnectRequired;
+        reason_="Bastion loaded after the world login checks. Return to the login screen and reconnect to submit the DLL check.";
+    }
+}
 void Adapter::game_state(int value) {
-    if(value==GAMESTATE_PRECHARSELECT||value==GAMESTATE_UNLOADING) peer(false);
+    if(value==GAMESTATE_UNLOADING) {world_login(false);return;}
+    if(value==GAMESTATE_PRECHARSELECT) {peer(false);return;}
+    if(selected_&&(value==GAMESTATE_LOGGINGIN||value==GAMESTATE_INGAME)) finish_world_login();
 }
 bool Adapter::clock(std::uint64_t& now) {
     if(!selected_||!HAILSTONE_HOST_HAS(host_,monotonic_ms)) return false;
@@ -53,7 +77,7 @@ bool Adapter::measure(std::uint32_t kind,HailstoneBinaryMeasurement& out) {
 }
 void Adapter::world_outgoing(std::uint16_t op) {
     if(!login_checkpoint(op)) return;
-    if(!selected_||native_protocol_||legacy_attempted_) return;
+    if(!selected_||world_zoning_||native_protocol_||legacy_attempted_) return;
     // Guard before calling the host: measurement and packet hooks may reenter us.
     legacy_attempted_=true;
     const auto generation=generation_;
@@ -64,6 +88,7 @@ void Adapter::world_outgoing(std::uint16_t op) {
         }
         return;
     }
+    status_=Status::Measuring;reason_.clear();
     HailstoneBinaryMeasurement addon{};
     try {
         if(!measure(HAILSTONE_BINARY_CALLING_PLUGIN,addon)) {
@@ -88,7 +113,7 @@ void Adapter::world_outgoing(std::uint16_t op) {
     send_legacy(now);
 }
 void Adapter::send_legacy(std::uint64_t now) {
-    if(!selected_||native_protocol_||!legacy_pending_||legacy_sending_) return;
+    if(!selected_||world_zoning_||native_protocol_||!legacy_pending_||legacy_sending_) return;
     if(!HAILSTONE_HOST_HAS(host_,send_packet)) {
         legacy_pending_=false;status_=Status::Failed;reason_="The world packet service is unavailable.";return;
     }
@@ -171,7 +196,7 @@ void Adapter::send(std::uint64_t now) {
 }
 void Adapter::pulse() {
     // No per-frame clock calls once the legacy report has been submitted.
-    if(!selected_||(!native_protocol_&&!legacy_pending_)) return;
+    if(!selected_||world_zoning_||(!native_protocol_&&!legacy_pending_)) return;
     std::uint64_t now=0;if(!clock(now)) return;
     if(!native_protocol_) {if(now>=legacy_next_) send_legacy(now);return;}
     if((status_==Status::Queued||status_==Status::Sending||status_==Status::Sent)&&now>=deadline_) {
@@ -181,7 +206,7 @@ void Adapter::pulse() {
     if(status_==Status::Queued&&now>=next_) send(now);
 }
 bool Adapter::packet(std::uint16_t op,const void* data,std::size_t count) {
-    if(!selected_||op!=opcode) return false;
+    if(!selected_||world_zoning_||op!=opcode) return false;
     if(!data||count<8) return true;
     try {
         hailstone::ByteReader reader(data,count);
@@ -224,6 +249,7 @@ int Adapter::ui(const HailstoneArgs* args,HailstoneOut* out) {
     const auto operation=services::argument(host_,args,0,16);if(!operation||*operation!="state") return 0;
     result.begin();result.boolean("active",selected_);result.boolean("measured",measured_);result.boolean("sent",sent_);
     result.boolean("accepted",selected_&&status_==Status::Accepted);result.string("status",label(status_));result.string("reason",reason_);
+    result.boolean("requires_reconnect",selected_&&status_==Status::ReconnectRequired);
     result.string("addon_version",addon_version);result.number("attempts",attempts_);result.number("features",features);
     result.boolean("native_protocol",native_protocol_);result.boolean("legacy_measured",legacy_measured_);
     result.boolean("legacy_submitted",legacy_submitted_);result.number("legacy_attempts",legacy_attempts_);

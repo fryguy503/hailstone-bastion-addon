@@ -1,5 +1,11 @@
 # Changes
 
+## 0.1.0-preview.5
+
+- Keep the original login verification state across zone transfers instead of submitting a fresh report that the server intentionally ignores while zoning.
+- Show **Reconnect required** when Bastion first loads after the login checks, and cancel incomplete reports when the login's WORLD connection ends.
+- Preserve the real server acknowledgement and DLL measurement from a completed login without per-zone rehashing or retransmission.
+
 ## 0.1.0-preview.4
 
 - Submit the measured, loaded `bastion.dll` checksum through Bastion's existing DLL integrity check before login file checks or EnterWorld.

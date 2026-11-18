@@ -24,6 +24,17 @@ separate, and its binary details
 show the actual `bastion.dll` byte count, decimal FNV63 checksum and addon version. This legacy report
 checks the addon DLL only; it does not report a running executable/addon SHA256 pair.
 
+This check belongs to a fresh WORLD login. Bastion's server ignores integrity packets during zone
+transfers (`LoginInfo.zoning=1`). The addon retains a completed login's original receipt and digest
+across those transfers; it does not remeasure or resubmit the DLL there. Pending reports are cancelled
+when their login connection ends. If the addon first loads after zone entry, Settings shows
+**Reconnect required** and **Not submitted**: return to the login screen and reconnect after approving
+the DLL. An ignored transfer packet must not stand in for the missed login report.
+
+Preview 4 could submit during a transfer after late approval, showing **Submitted** even though the
+server intentionally discarded the report and left `account.crc_dll` unchanged. This sequence was
+reproduced with the real native loader and loopback transport; it is fixed in Preview 5.
+
 The server's `variables.crc_dll` whitelist must include the newly measured `bastion.dll` checksum.
 Append the new value while preserving every existing approved legacy `dinput8.dll` checksum; replacing
 the list would reject those existing clients. A rebuilt DLL needs its own newly measured checksum.

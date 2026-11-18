@@ -8,17 +8,18 @@ namespace bastion::integrity {
 inline constexpr std::uint16_t opcode=0x7d1a;
 inline constexpr std::uint32_t magic=0x43495431,version=3;
 inline constexpr std::uint64_t features=0x3fff,challenge_ttl_ms=60000,ack_timeout_ms=10000;
-inline constexpr std::string_view addon_version="0.1.0-preview.4";
+inline constexpr std::string_view addon_version="0.1.0-preview.5";
 inline constexpr bool login_checkpoint(std::uint16_t op) {
     return op==0x0f13||op==0x4b8d||op==0x298d||op==0x578f;
 }
-enum class Status { Inactive,Waiting,Measuring,Queued,Sending,Sent,Accepted,Rejected,Unsupported,Malformed,TimedOut,Failed,LegacyQueued,LegacySubmitted };
+enum class Status { Inactive,Waiting,Measuring,Queued,Sending,Sent,Accepted,Rejected,Unsupported,Malformed,TimedOut,Failed,LegacyQueued,LegacySubmitted,ReconnectRequired };
 const char* label(Status);
 class Adapter {
 public:
     void set_host(const PluginHostApi*);
     void initialize();
     void peer(bool);
+    void world_login(bool zoning);
     void game_state(int);
     void pulse();
     // Wrapper routes only packets from the current incoming WORLD connection.
@@ -35,6 +36,7 @@ private:
     struct Ack {std::uint32_t flags=0;std::string reason;};
     void retire(Status,std::string_view);
     void reset_legacy();
+    void finish_world_login();
     void send_legacy(std::uint64_t);
     bool clock(std::uint64_t&);
     bool measure(std::uint32_t,HailstoneBinaryMeasurement&);
@@ -44,7 +46,7 @@ private:
     static int callback(void*,const HailstoneArgs*,HailstoneOut*) noexcept;
     int ui(const HailstoneArgs*,HailstoneOut*);
     const PluginHostApi* host_=nullptr;
-    bool selected_=false,sent_=false,measured_=false,has_clock_=false;
+    bool selected_=false,sent_=false,measured_=false,has_clock_=false,world_zoning_=false;
     bool native_protocol_=false,legacy_attempted_=false,legacy_measured_=false;
     bool legacy_pending_=false,legacy_sending_=false,legacy_submitted_=false;
     Status status_=Status::Inactive;

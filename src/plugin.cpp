@@ -162,6 +162,10 @@ int packet(int stream,int direction,HailstonePacket* p) {
     if(!initialized || !p) return 0;
     if(stream==HAILSTONE_STREAM_WORLD) {
         if(direction==HAILSTONE_OUT && p->opcode==0x7a09) {
+            // RoF2 LoginInfo's zoning flag is the sole field needed here. Never
+            // inspect or retain its account/key strings. Invalid records retire state.
+            const bool zoning=p->data&&p->size==464&&p->data[188]==1;
+            integrity.world_login(zoning);
             saw_world_announcement=false;
             peer(false);
         }

@@ -1,5 +1,29 @@
 # Preview validation — 2026-11-17
 
+## Preview 5 login and zoning correction — 2026-11-18
+
+| Check | Result |
+|---|---|
+| Windows x64 addon | 32/32 CTest suites passed |
+| Linux addon, ASan/UBSan | 20/20 suites passed; no sanitizer findings |
+| Integrity lifecycle and SDK output | 949 fixture checks passed on Windows and Linux |
+| Plugin routing and LoginInfo bounds | 145 checks passed |
+| Both UI packs with current client helpers | Hub suite passed 6,472 checks |
+| Real native loader, measurement, consent, GameConnection and loopback transport | Released Preview 4 reproduces ignored zoning submission; Preview 5 preserves the original receipt and sends no zoning report |
+
+The transport comparison uses the exact released Preview 4 DLL, a frozen Preview 5 build, and the
+production `ee744e4e` engine. Early approval sends one measured report before CRC1; approval at
+character select sends before EnterWorld. Approval after zone entry remains **Reconnect required**,
+including after a real server-requested WORLD zoning reconnect. Pending legacy/native work is
+retired when the initial login ends, including reentrant close during measurement or send.
+
+The inspected Bastion server deliberately ignores reports with `LoginInfo.zoning=1`. The test uses
+synthetic server identity, approvals and loopback sockets; no live server database was read or written.
+The companion generic client entry change holds manual, keyboard, automatic, boxed and Return Home
+entry while native login approval is pending. It does not change the server protocol or ordinary zoning.
+Live acceptance still requires approving the new DLL and performing a fresh full login, then checking
+the server's `account.crc_dll` receipt. Server allowlist approval is separate from that receipt.
+
 ## Preview 4 legacy DLL integrity
 
 The addon uses the existing CIT1 version 2 DLL slot with the measured loaded-addon FNV63 checksum.

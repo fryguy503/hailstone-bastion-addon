@@ -68,6 +68,14 @@ for _,pack in ipairs({"modern","gamepad"})do
   check(integrityText:find("Legacy report Submitted",1,true)and integrityText:find("Unconfirmed (no acknowledgement)",1,true)
     and not integrityText:find("Accepted",1,true),"legacy local submission was presented as server approval")
   integrity.accepted=true;frame();check(not table.concat(texts," "):find("Accepted",1,true),"legacy report inherited an unrelated acceptance flag")
+  integrity.requires_reconnect=true;integrity.status="Reconnect required"
+  integrity.reason="Bastion loaded after the world login checks. Return to the login screen and reconnect to submit the DLL check."
+  frame();integrityText=table.concat(texts," ")
+  check(integrityText:find("Report Reconnect required",1,true)and integrityText:find("Server Not submitted",1,true)
+    and integrityText:find(integrity.reason,1,true)and not integrityText:find("Legacy report Submitted",1,true)
+    and not integrityText:find("Accepted",1,true)and not integrityText:find("FNV63 checksum",1,true),
+    "late approval or a zoning report claimed a login submission or stale server acceptance")
+  integrity.requires_reconnect=nil
   integrity.native_protocol=true;integrity.measured=true;integrity.sent=true;integrity.accepted=false
   integrity.status="Server rejected";integrity.reason="Native pair rejected; no legacy fallback.";frame();integrityText=table.concat(texts," ")
   check(integrityText:find("Report Sent",1,true)and integrityText:find("Server rejected",1,true)and integrityText:find(integrity.reason,1,true)

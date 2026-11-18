@@ -6,6 +6,12 @@
 #include <iostream>
 #include <limits>
 
+struct HailstoneArgs {};
+struct HailstoneOut {
+    std::string key;
+    std::map<std::string,bool> booleans;
+    std::map<std::string,std::string> strings;
+};
 namespace integrity=bastion::integrity;
 namespace server=bastion_native_integrity;
 using citadel_test::check;
@@ -22,6 +28,18 @@ struct Rig:citadel_test::Host {
     unsigned fault=0;
     Rig() {
         api.abi=HAILSTONE_PLUGIN_ABI;
+        api.arg=[](void*,const HailstoneArgs*,std::size_t index,HailstoneValue* out) {
+            if(index!=0) return 0;
+            *out={};out->kind=HAILSTONE_STRING;out->s="state";return 1;
+        };
+        api.out_begin_table=[](void*,HailstoneOut*) {};
+        api.out_begin_array=[](void*,HailstoneOut*) {};
+        api.out_end=[](void*,HailstoneOut*) {};
+        api.out_key=[](void*,HailstoneOut* out,const char* key) {out->key=key;};
+        api.out_value=[](void*,HailstoneOut* out,const HailstoneValue* value) {
+            if(value->kind==HAILSTONE_BOOL) out->booleans[out->key]=value->i!=0;
+            if(value->kind==HAILSTONE_STRING) out->strings[out->key]=value->s;
+        };
         executable.size=module.size=sizeof(executable);
         executable.kind=HAILSTONE_BINARY_EXECUTABLE;module.kind=HAILSTONE_BINARY_CALLING_PLUGIN;
         executable.byte_count=0x112233;module.byte_count=0x445566;
@@ -65,6 +83,16 @@ struct Rig:citadel_test::Host {
     }
     ~Rig() {addon.set_host(nullptr);}
     void select() {addon.peer(true);}
+    HailstoneOut state() const {
+        HailstoneArgs args;HailstoneOut out;
+        const auto function=functions.at("integrity");
+        check(function.fn(function.self,&args,&out)==1,"integrity state callback became unavailable");
+        return out;
+    }
+    HailstoneOut state() {
+        const auto function=functions.at("integrity");HailstoneArgs args;HailstoneOut out;
+        check(function.fn(function.self,&args,&out)==1,"integrity state callback failed");return out;
+    }
     bool deliver(const Wire& bytes,std::uint16_t op=integrity::opcode) {return addon.packet(op,bytes.data(),bytes.size());}
     void issue(std::uint64_t nonce=0x1122334455667788ull) {check(deliver(server::challenge(nonce)),"native challenge did not stay on its private route");}
     std::span<const std::uint8_t> report() const {
@@ -389,12 +417,199 @@ void legacy_reentrant_submission() {
           !unsupported.addon.legacy_submitted()&&!unsupported.addon.report_sent(),
           "legacy send completion downgraded a reentrant valid unsupported native challenge");
 }
+void late_load_and_zoning_require_fresh_login() {
+    Rig late;late.select();late.addon.game_state(GAMESTATE_INGAME);
+    check(late.addon.status()==integrity::Status::ReconnectRequired&&late.state().booleans.at("requires_reconnect"),
+          "late in-zone approval did not explain that a fresh login is required");
+    check(late.measured.empty()&&late.sent.empty(),"late approval measured or reported during ordinary in-zone state");
+    late.addon.world_login(true);late.addon.peer(false);late.addon.game_state(GAMESTATE_PRECHARSELECT);
+    late.select();late.addon.game_state(GAMESTATE_INGAME);outgoing_milestones(late);late.now+=10000;late.addon.pulse();
+    check(late.measured.empty()&&late.sent.empty()&&late.addon.status()==integrity::Status::ReconnectRequired&&
+          late.state().booleans.at("requires_reconnect"),"zone transfer tried to repair a missed fresh-login report");
+    late.addon.world_login(false);late.addon.peer(false);late.select();
+    check(!late.state().booleans.at("requires_reconnect"),"fresh world login retained a stale reconnect requirement");
+    late.addon.world_outgoing(legacy_milestones.front());
+    check(late.measured.size()==1&&late.sent.size()==1&&late.addon.legacy_submitted(),
+          "fresh login after late approval failed to submit the actual addon report");
+}
+void zoning_preserves_successful_receipts_without_resending() {
+    Rig legacy;legacy.addon.world_login(false);legacy.select();legacy.addon.world_outgoing(legacy_milestones.front());
+    const auto receipt=legacy.sent.front().bytes;++legacy.module.fnv1a63;
+    legacy.addon.game_state(GAMESTATE_INGAME);
+    for(unsigned n=0;n<3;++n) {
+        legacy.addon.world_login(true);legacy.addon.peer(false);legacy.addon.game_state(GAMESTATE_PRECHARSELECT);
+        legacy.select();outgoing_milestones(legacy);legacy.addon.game_state(GAMESTATE_INGAME);
+        legacy.now+=100000;legacy.addon.pulse();
+        const auto state=legacy.state();
+        check(legacy.sent.size()==1&&legacy.measured.size()==1&&legacy.sent.front().bytes==receipt&&
+              legacy.addon.legacy_submitted()&&legacy.addon.legacy_attempts()==1&&
+              legacy.addon.status()==integrity::Status::LegacySubmitted&&!state.booleans.at("requires_reconnect")&&
+              state.booleans.at("legacy_submitted")&&!state.booleans.at("accepted"),
+              "zoning erased, remeasured or falsely upgraded the original unacknowledged DLL receipt");
+    }
+    legacy.addon.world_login(false);legacy.addon.peer(false);legacy.select();
+    check(!legacy.addon.legacy_submitted()&&legacy.addon.status()==integrity::Status::Waiting,
+          "fresh login retained the preceding login's legacy receipt");
+    legacy.addon.world_outgoing(legacy_milestones.front());
+    check(legacy.sent.size()==2&&legacy.measured.size()==2&&legacy.sent.back().bytes!=receipt,
+          "fresh login reused the old report instead of measuring its current loaded addon");
+    Rig native;native.addon.world_login(false);native.select();native.issue(901);native.addon.pulse();
+    native.deliver(server::acknowledgement(901,server::Status::Accepted,"Current login approved"));
+    native.addon.world_login(true);native.addon.peer(false);native.addon.game_state(GAMESTATE_PRECHARSELECT);
+    native.select();native.addon.game_state(GAMESTATE_INGAME);outgoing_milestones(native);
+    native.now+=100000;native.addon.pulse();
+    check(native.sent.size()==1&&native.measured.size()==2&&native.addon.status()==integrity::Status::Accepted&&
+          native.addon.report_sent()&&native.state().booleans.at("accepted")&&!native.state().booleans.at("requires_reconnect"),
+          "zoning discarded a native server acceptance or resent it on the zoning connection");
+    native.addon.world_login(false);native.addon.peer(false);native.select();
+    check(native.addon.status()==integrity::Status::Waiting&&!native.addon.report_sent()&&
+          !native.state().booleans.at("accepted"),"fresh login inherited a prior login's server acceptance");
+}
+void zoning_cancels_unsubmitted_retries_and_host_reset_retires_receipts() {
+    Rig queued;queued.select();queued.admit=false;queued.addon.world_outgoing(legacy_milestones.front());
+    check(queued.addon.status()==integrity::Status::LegacyQueued,"retry fixture failed to queue its first report");
+    queued.addon.world_login(true);queued.addon.peer(false);queued.select();queued.admit=true;
+    queued.now+=10000;outgoing_milestones(queued);queued.addon.pulse();queued.addon.game_state(GAMESTATE_INGAME);
+    check(queued.sent.size()==1&&queued.measured.size()==1&&!queued.addon.legacy_submitted()&&
+          queued.addon.status()==integrity::Status::ReconnectRequired&&queued.state().booleans.at("requires_reconnect"),
+          "zoning retried an unsubmitted fresh-login report or presented its failed attempt as a receipt");
+    Rig native;native.select();native.issue(902);
+    native.addon.world_login(true);native.addon.peer(false);native.select();native.addon.pulse();outgoing_milestones(native);
+    check(native.sent.empty()&&native.measured.size()==2&&native.addon.status()==integrity::Status::ReconnectRequired,
+          "a queued native report leaked onto a later zoning connection");
+    Rig reset;reset.select();reset.addon.world_outgoing(legacy_milestones.front());
+    reset.addon.world_login(true);reset.addon.peer(false);reset.select();reset.addon.set_host(nullptr);
+    check(reset.addon.status()==integrity::Status::Inactive&&!reset.addon.legacy_submitted()&&!reset.addon.report_sent(),
+          "losing the host retained a previous login's submitted receipt");
+    reset.addon.set_host(&reset.api);reset.addon.initialize();reset.select();reset.addon.game_state(GAMESTATE_INGAME);
+    check(reset.addon.status()==integrity::Status::ReconnectRequired&&reset.state().booleans.at("requires_reconnect"),
+          "new host late load inherited a submitted receipt from the retired host");
+}
+void initial_world_close_cancels_pending_and_fresh_login_recovers() {
+    std::uint64_t nonce=1000;
+    for(const int close_state:{GAMESTATE_LOGGINGIN,GAMESTATE_INGAME}) {
+        Rig legacy;legacy.select();legacy.admit=false;legacy.addon.world_outgoing(legacy_milestones.front());
+        check(legacy.addon.status()==integrity::Status::LegacyQueued&&legacy.sent.size()==1&&legacy.measured.size()==1,
+              "initial-close fixture did not leave an unsubmitted legacy retry");
+        legacy.addon.game_state(close_state);legacy.addon.game_state(GAMESTATE_INGAME);
+        legacy.admit=true;legacy.now+=10000;legacy.addon.pulse();outgoing_milestones(legacy);
+        check(legacy.sent.size()==1&&legacy.measured.size()==1&&!legacy.addon.legacy_submitted()&&
+              legacy.addon.status()==integrity::Status::ReconnectRequired&&legacy.state().booleans.at("requires_reconnect"),
+              "initial WORLD close let a pending legacy retry claim submission on a closed connection");
+        ++legacy.module.fnv1a63;legacy.addon.world_login(false);legacy.select();
+        check(!legacy.state().booleans.at("requires_reconnect"),"fresh login retained initial-close recovery state");
+        legacy.addon.world_outgoing(legacy_milestones.front());
+        check(legacy.sent.size()==2&&legacy.measured.size()==2&&legacy.addon.legacy_submitted(),
+              "fresh full login failed to remeasure and submit after initial legacy cancellation");
+        check_legacy_wire(legacy,legacy.module.fnv1a63);
+        for(const bool already_sent:{false,true}) {
+            Rig native;native.select();const auto old_nonce=nonce++;native.issue(old_nonce);
+            if(already_sent) native.addon.pulse();
+            check(native.addon.status()==(already_sent?integrity::Status::Sent:integrity::Status::Queued),
+                  "initial-close fixture did not reach the native queued or awaiting-ack state");
+            const auto sends=native.sent.size(),measurements=native.measured.size();
+            native.addon.game_state(close_state);native.addon.game_state(GAMESTATE_INGAME);
+            native.deliver(server::acknowledgement(old_nonce,server::Status::Accepted,"Closed WORLD"));
+            native.now+=10000;native.addon.pulse();outgoing_milestones(native);
+            const auto closed=native.state();
+            check(native.sent.size()==sends&&native.measured.size()==measurements&&!native.addon.report_sent()&&
+                  !closed.booleans.at("accepted")&&closed.booleans.at("requires_reconnect")&&
+                  native.addon.status()==integrity::Status::ReconnectRequired,
+                  "initial WORLD close retried native data, accepted a retired nonce or downgraded to legacy");
+            native.addon.world_login(false);native.select();const auto current_nonce=nonce++;native.issue(current_nonce);native.addon.pulse();
+            native.deliver(server::acknowledgement(old_nonce,server::Status::Accepted,"Previous login"));
+            check(native.addon.status()==integrity::Status::Sent&&!native.state().booleans.at("accepted"),
+                  "fresh login accepted an initial-close predecessor's acknowledgement");
+            native.deliver(server::acknowledgement(current_nonce,server::Status::Accepted,"Fresh login approved"));
+            check(native.sent.size()==sends+1&&native.measured.size()==measurements+2&&native.addon.report_sent()&&
+                  native.addon.status()==integrity::Status::Accepted&&native.state().booleans.at("accepted"),
+                  "fresh native login failed to recover with its own current measurement and acknowledgement");
+        }
+    }
+}
+void initial_world_close_preserves_completed_receipts() {
+    for(const int close_state:{GAMESTATE_LOGGINGIN,GAMESTATE_INGAME}) {
+        Rig legacy;legacy.select();legacy.addon.world_outgoing(legacy_milestones.front());
+        const auto wire=legacy.sent.front().bytes;const auto original=legacy.state();++legacy.module.fnv1a63;
+        legacy.addon.game_state(close_state);legacy.addon.game_state(GAMESTATE_INGAME);
+        legacy.now+=100000;legacy.addon.pulse();outgoing_milestones(legacy);
+        const auto retained=legacy.state();
+        check(legacy.sent.size()==1&&legacy.sent.front().bytes==wire&&legacy.measured.size()==1&&
+              legacy.addon.status()==integrity::Status::LegacySubmitted&&legacy.addon.legacy_submitted()&&
+              !retained.booleans.at("requires_reconnect")&&!retained.booleans.at("accepted")&&
+              retained.strings.at("legacy_checksum")==original.strings.at("legacy_checksum")&&
+              retained.strings.at("legacy_addon_bytes")==original.strings.at("legacy_addon_bytes"),
+              "initial WORLD close erased, rehashed or upgraded a completed unacknowledged legacy receipt");
+        Rig native;native.select();native.issue(1100);native.addon.pulse();
+        native.deliver(server::acknowledgement(1100,server::Status::Accepted,"Current login approved"));
+        const auto accepted=native.state();
+        native.addon.game_state(close_state);native.addon.game_state(GAMESTATE_INGAME);
+        native.now+=100000;native.addon.pulse();outgoing_milestones(native);
+        const auto current=native.state();
+        check(native.sent.size()==1&&native.measured.size()==2&&native.addon.status()==integrity::Status::Accepted&&
+              native.addon.report_sent()&&current.booleans.at("accepted")&&!current.booleans.at("requires_reconnect")&&
+              current.strings.at("executable_bytes")==accepted.strings.at("executable_bytes")&&
+              current.strings.at("addon_bytes")==accepted.strings.at("addon_bytes"),
+              "initial WORLD close discarded a completed native acknowledgement or resent its report");
+    }
+}
+void initial_world_close_during_send_cannot_restore_submission() {
+    for(const int close_state:{GAMESTATE_LOGGINGIN,GAMESTATE_INGAME}) {
+        for(const bool admit:{false,true}) {
+            Rig legacy;legacy.select();legacy.admit=admit;
+            legacy.during_send=[&]{legacy.addon.game_state(close_state);};
+            legacy.addon.world_outgoing(legacy_milestones.front());
+            legacy.now+=10000;legacy.addon.pulse();outgoing_milestones(legacy);
+            check(legacy.sent.size()==1&&legacy.measured.size()==1&&!legacy.addon.legacy_submitted()&&
+                  legacy.addon.status()==integrity::Status::ReconnectRequired&&legacy.state().booleans.at("requires_reconnect"),
+                  "legacy host send completion restored queued/submitted state after reentrant initial WORLD close");
+            Rig native;native.select();native.issue(1200);native.admit=admit;
+            native.during_send=[&]{
+                native.deliver(server::acknowledgement(1200,server::Status::Accepted,"Reentrant acknowledgement"));
+                native.addon.game_state(close_state);
+            };
+            native.addon.pulse();
+            native.deliver(server::acknowledgement(1200,server::Status::Accepted,"After close"));
+            native.now+=10000;native.addon.pulse();outgoing_milestones(native);
+            const auto state=native.state();
+            check(native.sent.size()==1&&native.measured.size()==2&&!native.addon.report_sent()&&
+                  !state.booleans.at("accepted")&&state.booleans.at("requires_reconnect")&&
+                  native.addon.status()==integrity::Status::ReconnectRequired,
+                  "native host completion or deferred acknowledgement crossed reentrant initial WORLD close");
+        }
+    }
+}
+void initial_world_close_during_legacy_measurement_requires_reconnect() {
+    for(const int close_state:{GAMESTATE_LOGGINGIN,GAMESTATE_INGAME}) {
+        Rig legacy;legacy.select();
+        legacy.during_measure=[&](std::uint32_t){legacy.addon.game_state(close_state);};
+        legacy.addon.world_outgoing(legacy_milestones.front());
+        legacy.now+=10000;legacy.addon.pulse();outgoing_milestones(legacy);
+        const auto closed=legacy.state();
+        check(legacy.measured.size()==1&&legacy.sent.empty()&&legacy.addon.status()==integrity::Status::ReconnectRequired&&
+              closed.booleans.at("requires_reconnect")&&!closed.booleans.at("legacy_measured")&&
+              !closed.booleans.at("legacy_submitted")&&!closed.booleans.at("accepted")&&
+              closed.strings.at("legacy_checksum")=="0"&&closed.strings.at("legacy_addon_bytes")=="0",
+              "legacy measurement completion claimed cached data or sent after reentrant initial WORLD close");
+        legacy.during_measure={};++legacy.module.fnv1a63;legacy.addon.world_login(false);legacy.select();
+        legacy.addon.world_outgoing(legacy_milestones.front());
+        check(legacy.measured.size()==2&&legacy.sent.size()==1&&legacy.addon.legacy_submitted()&&
+              !legacy.state().booleans.at("requires_reconnect"),
+              "fresh full login failed to recover from reentrant initial-close measurement retirement");
+        check_legacy_wire(legacy,legacy.module.fnv1a63);
+    }
+}
 } // namespace
 int main() {
     try {
         actual_wire_and_server_acceptance();parser_and_legacy_routing();acknowledgement_binding();retry_timeout_and_reentrant_send();measurement_and_clock_failure();
         legacy_wire_and_milestones();legacy_retries_and_snapshot();legacy_measurement_failures_and_new_session();
         valid_v3_prevents_legacy_downgrade();malformed_v3_does_not_disable_legacy();legacy_reentrant_measurement();legacy_reentrant_submission();
+        late_load_and_zoning_require_fresh_login();zoning_preserves_successful_receipts_without_resending();
+        zoning_cancels_unsubmitted_retries_and_host_reset_retires_receipts();
+        initial_world_close_cancels_pending_and_fresh_login_recovers();initial_world_close_preserves_completed_receipts();
+        initial_world_close_during_send_cannot_restore_submission();
+        initial_world_close_during_legacy_measurement_requires_reconnect();
         std::cout<<"Binary integrity: "<<citadel_test::checks<<" checks passed\n";return 0;
     } catch(const std::exception& error) {std::cerr<<"Binary integrity after "<<citadel_test::checks<<" checks: "<<error.what()<<'\n';return 1;}
 }

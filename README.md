@@ -4,7 +4,7 @@ A standalone Bastion addon with native Hailstone Lua windows for Modern and Game
 Open **`/bastion`** for tools, character settings, and the searchable server command catalog.
 `/citadel` and `/cit` remain compatible aliases.
 
-Preview 4 targets upstream Hailstone `6446875a`, including its public server add-on services,
+Preview 5 targets upstream Hailstone `6446875a`, including its public server add-on services,
 modular UI extensions and map ownership. The map-local filter panel uses `hs.UI` 1.5.
 Hailstone builds missing those services can load the addon with its Bastion features inactive.
 
@@ -71,7 +71,8 @@ Settings are kept in Hailstone's own per-server/per-character plugin directories
 go into the addon's `exports` directory. Nothing writes to the player's game asset folder.
 Start the addon before world login to receive the server announcement and any early protocol messages.
 If it first loads at zone-in or is reloaded in a zone, it can also activate for Bastion - Production
-through the official Bastion login server.
+through the official Bastion login server. Its DLL check then requires returning to the login screen
+and reconnecting after approval. Zone transfers cannot complete a missed login check.
 
 The stock Raid controls use `hs.UI.extensions` in both UI packs. They list managers or prepare a
 grant/revoke request for the selected character, including members in another zone. Opening or drawing
