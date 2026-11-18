@@ -1,4 +1,5 @@
 #include "citadel_test_host.h"
+#include "hailstone_byte_io.h"
 #include <algorithm>
 #include <iostream>
 extern "C" std::uint32_t hailstone_plugin_abi();
@@ -195,5 +196,64 @@ int main() { try {
         check(!active(),"late fallback accepted an unrelated server");
         ShutdownPlugin();
     }
+
+    static unsigned measurements=0;
+    h.api.abi=HAILSTONE_PLUGIN_ABI;
+    h.api.measure_binary=[](void*,std::uint32_t kind,HailstoneBinaryMeasurement* out) -> int {
+        ++measurements;
+        check(kind==HAILSTONE_BINARY_CALLING_PLUGIN,"legacy route measured an unrelated binary");
+        *out={};out->size=sizeof(*out);out->kind=kind;out->byte_count=123456;
+        out->fnv1a63=0x123456789abcdef;out->sha256[0]=1;return 1;
+    };
+    server={"login.bastiongame.com","Bastion - Production",false};
+    InitializePlugin();
+    check(!active(),"initialization activated the addon without a login checkpoint");
+    Bytes checksum(8);put(checksum,0,17,8);const auto original=checksum;
+    p={};p.opcode=0x0f13;p.data=reinterpret_cast<std::uint8_t*>(checksum.data());p.size=checksum.size();
+    const auto checkpoint=p;
+    h.sent.clear();
+    check(OnPacket(HAILSTONE_STREAM_ZONE,HAILSTONE_OUT,&p)==0&&measurements==0,
+          "zone traffic triggered the WORLD DLL check");
+    check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_IN,&p)==0&&measurements==0,
+          "incoming traffic triggered the DLL check");
+    h.during_send=[&] {
+        HailstonePacket nested{};nested.opcode=0x7d1a;
+        check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&nested)==0,"addon consumed its own outgoing report");
+        check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&p)==0,"recursive checkpoint was consumed");
+    };
+    check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&p)==0,"legacy report consumed the original CRC1");
+    check(active()&&measurements==1&&h.sent.size()==1,"late login activation did not submit exactly one DLL report");
+    check(p.opcode==checkpoint.opcode&&p.data==checkpoint.data&&p.size==checkpoint.size&&checksum==original,
+          "legacy report modified the original checksum packet");
+    check(h.sent[0].opcode==0x7d1a&&h.sent[0].bytes.size()==16,"legacy WORLD report has the wrong envelope");
+    hailstone::ByteReader report(h.sent[0].bytes.data(),h.sent[0].bytes.size());
+    check(report.le<std::uint32_t>()==0x43495431&&report.le<std::uint32_t>()==2&&
+          report.le<std::uint64_t>()==0x123456789abcdef,"legacy route did not send the measured module checksum");
+    h.during_send={};
+    p.opcode=0x578f;
+    check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&p)==0&&measurements==1&&h.sent.size()==1,
+          "EnterWorld repeated the DLL measurement or report");
+    p.opcode=0x7a09;
+    OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&p);
+    check(!active(),"new WORLD login retained the previous integrity session");
+    p.opcode=0x578f;
+    check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&p)==0&&measurements==2&&h.sent.size()==2,
+          "EnterWorld fallback failed to start the next login's DLL report");
+    ShutdownPlugin();
+
+    InitializePlugin();h.sent.clear();
+    data.assign(560,std::byte{});text(data,36,"OtherWorld");
+    p.opcode=0x7ceb;p.data=reinterpret_cast<std::uint8_t*>(data.data());p.size=data.size();
+    OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_IN,&p);
+    p.opcode=0x0f13;
+    check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&p)==0&&!active()&&measurements==2&&h.sent.empty(),
+          "login fallback overrode an explicit unrelated WORLD announcement");
+    ShutdownPlugin();
+    server={"localhost","Bastion - Production",false};
+    InitializePlugin();
+    p.opcode=0x578f;
+    check(OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_OUT,&p)==0&&!active()&&measurements==2&&h.sent.empty(),
+          "legacy login fallback accepted an unrelated endpoint");
+    ShutdownPlugin();
     std::cout<<checks<<" plugin checks passed\n"; return 0;
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; } }

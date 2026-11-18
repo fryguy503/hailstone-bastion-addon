@@ -1,5 +1,11 @@
 # Changes
 
+## 0.1.0-preview.4
+
+- Submit the measured, loaded `bastion.dll` checksum through Bastion's existing DLL integrity check before login file checks or EnterWorld.
+- Measure once per login, retry only the cached report up to three times, and prefer the newer challenge protocol whenever offered.
+- Distinguish legacy submission from server acceptance in both UI packs, and provide a review-only tool to append the checksum to the server's DLL allowlist.
+
 ## 0.1.0-preview.3
 
 - Build with upstream Hailstone `6446875a` and use its standard native plugin entry points.

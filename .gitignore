@@ -1,5 +1,6 @@
 /build*/
 /release/
 /artifacts/
+__pycache__/
 *.pending.*
 *.previous

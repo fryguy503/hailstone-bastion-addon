@@ -50,6 +50,45 @@ for _,pack in ipairs({"modern","gamepad"})do
   integrity.accepted=true;integrity.status="Server accepted";frame();check(table.concat(texts," "):find("Accepted",1,true),"current server acknowledgement not shown")
   integrity.accepted=false;integrity.status="Server rejected";integrity.reason="This binary pair is not approved.";frame()
   check(table.concat(texts," "):find(integrity.reason,1,true)and #calls==0 and #sendCalls==0,"integrity status rendering sent an active request or lost server reason")
+  integrity.native_protocol=false;integrity.measured=false;integrity.sent=false;integrity.reason=""
+  integrity.legacy_measured=true;integrity.legacy_submitted=false;integrity.legacy_attempts=1
+  integrity.legacy_addon_bytes="2529792";integrity.legacy_checksum="9007199254740993";integrity.addon_version="0.1.0-preview.4"
+  integrity.status="Legacy DLL report queued";frame();integrityText=table.concat(texts," ")
+  check(integrityText:find("Legacy report Measured; waiting to send",1,true)and integrityText:find("Unconfirmed (no acknowledgement)",1,true)
+    and not integrityText:find("Accepted",1,true),"legacy queued report claimed server acceptance or lost queue status")
+  integrity.status="Report unavailable";integrity.legacy_attempts=3;integrity.reason="Legacy send queue unavailable.";frame();integrityText=table.concat(texts," ")
+  check(integrityText:find("Legacy report Report unavailable",1,true)and integrityText:find(integrity.reason,1,true)
+    and not integrityText:find("Measured; waiting to send",1,true),"exhausted legacy retries were displayed as still waiting to send")
+  integrity.status="Legacy DLL report queued";integrity.reason=""
+  clicks["Binary details"]=true;frame();integrityText=table.concat(texts," ")
+  check(integrityText:find("bastion.dll 2529792 bytes",1,true)and integrityText:find("FNV63 checksum 9007199254740993",1,true)
+    and integrityText:find("Version 0.1.0-preview.4",1,true)and not integrityText:find("EXE / addon",1,true),
+    "legacy binary details lost exact DLL identity or claimed executable measurement")
+  integrity.legacy_submitted=true;integrity.status="Legacy DLL report submitted";frame();integrityText=table.concat(texts," ")
+  check(integrityText:find("Legacy report Submitted",1,true)and integrityText:find("Unconfirmed (no acknowledgement)",1,true)
+    and not integrityText:find("Accepted",1,true),"legacy local submission was presented as server approval")
+  integrity.accepted=true;frame();check(not table.concat(texts," "):find("Accepted",1,true),"legacy report inherited an unrelated acceptance flag")
+  integrity.native_protocol=true;integrity.measured=true;integrity.sent=true;integrity.accepted=false
+  integrity.status="Server rejected";integrity.reason="Native pair rejected; no legacy fallback.";frame();integrityText=table.concat(texts," ")
+  check(integrityText:find("Report Sent",1,true)and integrityText:find("Server rejected",1,true)and integrityText:find(integrity.reason,1,true)
+    and integrityText:find("EXE / addon 123 / 456 bytes",1,true)and not integrityText:find("Legacy report",1,true)
+    and not integrityText:find("FNV63 checksum",1,true),"valid v3 protocol did not supersede a prior legacy report")
+  integrity.measured=false;integrity.sent=false;integrity.status="Unsupported";frame();integrityText=table.concat(texts," ")
+  check(integrityText:find("Unsupported",1,true)and not integrityText:find("Legacy report",1,true)
+    and not integrityText:find("FNV63 checksum",1,true),"unsupported v3 challenge displayed a legacy fallback")
+  integrity.measured=true;integrity.sent=true
+  integrity.accepted=true;integrity.status="Server accepted";frame()
+  check(table.concat(texts," "):find("Accepted",1,true),"v3 acknowledgement lost acceptance with legacy history")
+  integrity.native_protocol=false;integrity.measured=false;integrity.sent=false;integrity.accepted=false
+  integrity.legacy_measured=false;integrity.legacy_submitted=false;integrity.status="Report unavailable";integrity.reason="DLL measurement unavailable.";frame();integrityText=table.concat(texts," ")
+  check(integrityText:find("Report unavailable",1,true)and integrityText:find(integrity.reason,1,true)and not integrityText:find("FNV63 checksum",1,true)
+    and not integrityText:find("Legacy report",1,true),"failed DLL measurement fabricated legacy binary details or submission")
+  integrity.native_protocol=nil;integrity.legacy_measured=nil;integrity.legacy_submitted=nil;integrity.legacy_attempts=nil
+  integrity.legacy_addon_bytes=nil;integrity.legacy_checksum=nil;integrity.measured=false;integrity.sent=false;integrity.accepted=false
+  integrity.status="Waiting for server challenge";integrity.reason="";frame();integrityText=table.concat(texts," ")
+  check(integrityText:find("Waiting for server challenge",1,true)and not integrityText:find("Legacy report",1,true)
+    and not integrityText:find("FNV63 checksum",1,true)and #calls==0 and #sendCalls==0,
+    "missing legacy fields broke old-host display or passive integrity rendering performed an action")
   changes["NPCs"]=true;frame();check(#calls==0,"nontracker changed NPC visibility")
   changes["Group members"]=false;frame()
   check(calls[#calls][1]=="set"and calls[#calls][2]=="map_group"and calls[#calls][3]==0 and s.settings.map_group==1,

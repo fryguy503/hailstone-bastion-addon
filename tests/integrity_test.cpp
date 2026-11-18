@@ -46,7 +46,17 @@ struct Rig:citadel_test::Host {
         };
         api.send_packet=[](void* context,int stream,std::uint16_t opcode,const void* data,std::size_t count) -> int {
             auto& rig=*static_cast<Rig*>(static_cast<citadel_test::Host*>(context));
-            check(stream==HAILSTONE_STREAM_WORLD&&opcode==integrity::opcode&&count==168,"integrity report used the wrong stream/opcode/size");
+            check(stream==HAILSTONE_STREAM_WORLD&&opcode==integrity::opcode&&(count==16||count==168),"integrity report used the wrong stream/opcode/size");
+            check(data!=nullptr,"integrity submission supplied no packet bytes");
+            const auto wire=std::span(static_cast<const std::uint8_t*>(data),count);
+            if(count==168) {
+                server::Report decoded;
+                check(server::decode(wire,decoded),"actual native send was not an exact valid168-byte v3 report");
+            } else {
+                check(server::read(wire,0,4)==integrity::magic&&server::read(wire,4,4)==2&&
+                      server::read(wire,8,8)>0&&server::read(wire,8,8)<=INT64_MAX,
+                      "actual legacy send was not the exact v2 header and nonzero FNV63");
+            }
             rig.sent.push_back({opcode,{static_cast<const std::byte*>(data),static_cast<const std::byte*>(data)+count}});
             if(rig.during_send) rig.during_send();
             return rig.admit?1:0;
@@ -181,10 +191,210 @@ void measurement_and_clock_failure() {
     rollback.deliver(server::acknowledgement(222,server::Status::Accepted,"old clock"));
     check(rollback.addon.status()==integrity::Status::Failed&&!rollback.addon.report_sent(),"clock rollback retained a report/ack session");
 }
+constexpr std::array<std::uint16_t,4> legacy_milestones={0x0f13,0x4b8d,0x298d,0x578f};
+void outgoing_milestones(Rig& rig) {
+    for(const auto op:legacy_milestones)rig.addon.world_outgoing(op);
+}
+void check_legacy_wire(const Rig& rig,std::uint64_t expected) {
+    const auto bytes=rig.report();
+    check(bytes.size()==16,"legacy report acquired padding, native fields or an asset CRC payload");
+    check(server::read(bytes,0,4)==0x43495431&&server::read(bytes,4,4)==2&&server::read(bytes,8,8)==expected,
+          "legacy report did not contain the actual calling plugin's exact FNV63");
+    server::Report native;
+    check(!server::decode(bytes,native),"legacy submission was represented as native v3 approval evidence");
+}
+void legacy_wire_and_milestones() {
+    Rig unselected;outgoing_milestones(unselected);unselected.addon.pulse();
+    check(unselected.measured.empty()&&unselected.sent.empty()&&!unselected.addon.legacy_submitted(),
+          "unselected peer initiated a legacy integrity report");
+    Rig unrelated;unrelated.select();
+    for(const auto op:std::array<std::uint16_t,4>{0x7a09,0x7d1a,0x7d20,0x1234})unrelated.addon.world_outgoing(op);
+    check(unrelated.measured.empty()&&unrelated.sent.empty(),"an unrelated outgoing opcode initiated legacy integrity");
+    for(const auto first:legacy_milestones) {
+        Rig rig;rig.select();rig.addon.world_outgoing(first);
+        check(rig.sent.size()==1&&rig.addon.legacy_attempts()==1&&rig.addon.legacy_submitted(),
+              "first eligible milestone did not synchronously submit one legacy report");
+        check(rig.measured==std::vector<std::uint32_t>{HAILSTONE_BINARY_CALLING_PLUGIN},
+              "legacy report measured the executable or used a path/hash substitute instead of the calling addon");
+        check_legacy_wire(rig,rig.module.fnv1a63);
+        constexpr std::array<std::uint8_t,16> golden={0x31,0x54,0x49,0x43,2,0,0,0,0x99,0x88,0x77,0x66,0x55,0x44,0x33,0x22};
+        check(std::equal(golden.begin(),golden.end(),rig.report().begin()),"legacy report changed the literal little-endian16-byte wire");
+        check(rig.addon.status()==integrity::Status::LegacySubmitted&&!rig.addon.report_sent(),
+              "legacy send admission claimed native-report delivery or server acceptance");
+        outgoing_milestones(rig);rig.now+=10000;rig.addon.pulse();
+        check(rig.sent.size()==1&&rig.measured.size()==1&&rig.addon.legacy_attempts()==1,
+              "successful legacy submission repeated at another milestone or pulse");
+        rig.deliver(server::acknowledgement(888,server::Status::Accepted,"not a legacy acknowledgement"));
+        check(rig.addon.status()==integrity::Status::LegacySubmitted&&!rig.addon.report_sent(),
+              "an unbound native ACK turned unacknowledged legacy submission into acceptance");
+        check(rig.commands.empty(),"legacy integrity issued a gameplay command");
+    }
+}
+void legacy_retries_and_snapshot() {
+    Rig rig;rig.select();rig.admit=false;rig.addon.world_outgoing(legacy_milestones.front());
+    check(rig.addon.status()==integrity::Status::LegacyQueued&&rig.addon.legacy_attempts()==1&&
+          !rig.addon.legacy_submitted()&&!rig.addon.report_sent(),"failed legacy send was not left queued without success");
+    const auto original=rig.sent.front().bytes;
+    ++rig.module.fnv1a63;rig.module.byte_count+=128;
+    outgoing_milestones(rig);rig.addon.pulse();
+    check(rig.sent.size()==1&&rig.measured.size()==1,"another milestone bypassed the legacy retry delay or remeasured");
+    rig.now+=999;rig.addon.pulse();check(rig.sent.size()==1,"legacy retry occurred before one second");
+    ++rig.now;rig.addon.pulse();check(rig.sent.size()==2&&rig.addon.legacy_attempts()==2,"legacy retry did not run at the one-second boundary");
+    rig.now+=1000;rig.addon.pulse();
+    check(rig.sent.size()==3&&rig.addon.legacy_attempts()==3&&rig.addon.status()==integrity::Status::Failed,
+          "legacy retries did not stop at three failed submissions");
+    rig.now+=100000;outgoing_milestones(rig);rig.addon.pulse();
+    check(rig.sent.size()==3&&rig.measured.size()==1&&!rig.addon.legacy_submitted()&&!rig.addon.report_sent(),
+          "exhausted legacy retries restarted, remeasured or fabricated submission");
+    for(const auto& packet:rig.sent)check(packet.bytes==original,"legacy retry changed the measured binary snapshot");
+    Rig recovered;recovered.select();recovered.admit=false;recovered.addon.world_outgoing(legacy_milestones.front());
+    recovered.admit=true;recovered.now+=1000;recovered.addon.pulse();
+    check(recovered.sent.size()==2&&recovered.addon.legacy_submitted()&&recovered.addon.legacy_attempts()==2&&
+          recovered.addon.status()==integrity::Status::LegacySubmitted&&!recovered.addon.report_sent(),
+          "successful legacy retry did not retain its distinct unacknowledged outcome");
+    recovered.now+=10000;outgoing_milestones(recovered);recovered.addon.pulse();
+    check(recovered.sent.size()==2&&recovered.measured.size()==1,"successful retry continued transmitting legacy reports");
+    Rig throwing;throwing.select();throwing.during_send=[]{throw std::runtime_error("injected legacy send failure");};
+    throwing.addon.world_outgoing(legacy_milestones.front());throwing.now+=1000;throwing.addon.pulse();throwing.now+=1000;throwing.addon.pulse();
+    check(throwing.sent.size()==3&&throwing.measured.size()==1&&throwing.addon.status()==integrity::Status::Failed&&
+          !throwing.addon.legacy_submitted(),"throwing legacy sends escaped or exceeded the same bounded retry policy");
+}
+void legacy_measurement_failures_and_new_session() {
+    for(unsigned fault=1;fault<=9;++fault) {
+        Rig rig;rig.select();rig.fault=fault;outgoing_milestones(rig);rig.now+=10000;rig.addon.pulse();
+        check(rig.sent.empty()&&rig.measured==std::vector<std::uint32_t>{HAILSTONE_BINARY_CALLING_PLUGIN}&&
+              rig.addon.status()==integrity::Status::Failed&&!rig.addon.legacy_submitted()&&!rig.addon.report_sent(),
+              "invalid/failed legacy measurement fabricated a hash or repeated measurement at later milestones");
+    }
+    Rig missing;missing.select();missing.api.measure_binary=nullptr;outgoing_milestones(missing);missing.addon.pulse();
+    check(missing.measured.empty()&&missing.sent.empty()&&!missing.addon.legacy_submitted(),
+          "missing native binary API fabricated legacy integrity");
+    Rig unavailable;unavailable.select();unavailable.api.send_packet=nullptr;outgoing_milestones(unavailable);unavailable.addon.pulse();
+    check(unavailable.sent.empty()&&!unavailable.addon.legacy_submitted()&&!unavailable.addon.report_sent(),
+          "missing packet API claimed legacy or native submission");
+    Rig session;session.select();session.addon.world_outgoing(legacy_milestones.front());
+    const auto first=session.sent.front().bytes;
+    session.addon.peer(false);outgoing_milestones(session);
+    check(session.sent.size()==1&&!session.addon.legacy_submitted()&&session.addon.legacy_attempts()==0,
+          "peer retirement retained or transmitted legacy session state");
+    session.select();++session.module.fnv1a63;session.addon.world_outgoing(legacy_milestones.back());
+    check(session.sent.size()==2&&session.measured.size()==2&&session.addon.legacy_submitted()&&session.sent.back().bytes!=first,
+          "new peer session reused stale legacy measurement or suppressed its fresh report");
+    check_legacy_wire(session,session.module.fnv1a63);
+}
+void valid_v3_prevents_legacy_downgrade() {
+    for(const auto result:{server::Status::Accepted,server::Status::Rejected,server::Status::Unsupported,server::Status::Malformed}) {
+        Rig rig;rig.select();rig.issue(600);outgoing_milestones(rig);
+        check(rig.sent.empty()&&!rig.addon.legacy_submitted()&&rig.addon.legacy_attempts()==0,
+              "valid queued v3 challenge also initiated a legacy report");
+        rig.addon.pulse();rig.deliver(server::acknowledgement(600,result,"Native outcome"));
+        outgoing_milestones(rig);rig.now+=10000;rig.addon.pulse();
+        check(rig.sent.size()==1&&rig.report().size()==168&&rig.measured.size()==2&&!rig.addon.legacy_submitted()&&rig.addon.legacy_attempts()==0,
+              "terminal native acceptance/rejection/unsupported/malformed outcome downgraded to legacy");
+    }
+    Rig unsupported;unsupported.select();auto challenge=server::challenge(601);put(challenge,24,integrity::features|(1ull<<63),8);
+    unsupported.deliver(challenge);outgoing_milestones(unsupported);unsupported.addon.pulse();
+    check(unsupported.addon.status()==integrity::Status::Unsupported&&unsupported.measured.empty()&&unsupported.sent.empty(),
+          "valid v3 challenge with unsupported features fell back to legacy");
+    Rig failed;failed.select();failed.fault=1;failed.issue(602);failed.fault=0;outgoing_milestones(failed);failed.addon.pulse();
+    check(failed.sent.empty()&&failed.measured.size()==1&&!failed.addon.legacy_submitted(),
+          "native measurement failure was bypassed through legacy fallback");
+    failed.addon.peer(false);failed.select();failed.addon.world_outgoing(legacy_milestones.front());
+    check(failed.sent.size()==1&&failed.report().size()==16&&failed.addon.legacy_submitted(),
+          "new session could not use legacy after retiring its previous native challenge");
+}
+void malformed_v3_does_not_disable_legacy() {
+    const auto valid=server::challenge(700);
+    for(std::size_t length=0;length<valid.size();++length) {
+        Rig rig;rig.select();auto bytes=valid;bytes.resize(length);rig.deliver(bytes);rig.addon.world_outgoing(legacy_milestones.front());
+        check(rig.sent.size()==1&&rig.report().size()==16&&rig.measured==std::vector<std::uint32_t>{HAILSTONE_BINARY_CALLING_PLUGIN},
+              "truncated v3 header/challenge silently suppressed legacy support");
+    }
+    for(unsigned fault=0;fault<6;++fault) {
+        Rig rig;rig.select();auto bytes=valid;
+        if(fault==0)bytes.push_back(0);
+        if(fault==1)put(bytes,12,1);
+        if(fault==2)put(bytes,16,0,8);
+        if(fault==3)put(bytes,8,2);
+        if(fault==4)put(bytes,0,0);
+        if(fault==5)put(bytes,4,2);
+        rig.deliver(bytes);rig.addon.world_outgoing(legacy_milestones.front());
+        check(rig.sent.size()==1&&rig.report().size()==16&&rig.addon.legacy_submitted(),
+              "malformed/wrong-version v3 packet suppressed the legitimate legacy path");
+    }
+}
+void legacy_reentrant_measurement() {
+    Rig recursion;recursion.select();
+    recursion.during_measure=[&](std::uint32_t){outgoing_milestones(recursion);recursion.addon.pulse();};
+    recursion.addon.world_outgoing(legacy_milestones.front());
+    check(recursion.measured.size()==1&&recursion.sent.size()==1&&recursion.addon.legacy_submitted(),
+          "outgoing/pulse reentry during legacy measurement recursively measured or sent");
+    Rig retired;retired.select();retired.during_measure=[&](std::uint32_t){retired.addon.peer(false);};
+    retired.addon.world_outgoing(legacy_milestones.front());
+    check(retired.measured.size()==1&&retired.sent.empty()&&!retired.addon.legacy_submitted()&&retired.addon.status()==integrity::Status::Inactive,
+          "legacy measurement completion crossed peer retirement");
+    Rig fresh;fresh.select();bool restarted=false;
+    fresh.during_measure=[&](std::uint32_t){if(!restarted){restarted=true;fresh.addon.peer(false);fresh.select();}};
+    fresh.addon.world_outgoing(legacy_milestones.front());
+    check(fresh.sent.empty()&&fresh.addon.status()==integrity::Status::Waiting&&!fresh.addon.legacy_submitted(),
+          "old legacy measurement completion crossed a retired then reselected account session");
+    ++fresh.module.fnv1a63;fresh.addon.world_outgoing(legacy_milestones.back());
+    check(fresh.sent.size()==1&&fresh.measured.size()==2,"reselected session could not measure and send its current module");
+    check_legacy_wire(fresh,fresh.module.fnv1a63);
+    Rig replacement;replacement.select();bool replaced=false;
+    replacement.during_measure=[&](std::uint32_t){if(!replaced){replaced=true;replacement.issue(800);}};
+    replacement.addon.world_outgoing(legacy_milestones.front());
+    check(replacement.sent.empty()&&replacement.addon.status()==integrity::Status::Queued&&!replacement.addon.legacy_submitted(),
+          "legacy measurement completion overwrote a reentrant native challenge");
+    check(replacement.measured==std::vector<std::uint32_t>({HAILSTONE_BINARY_CALLING_PLUGIN,HAILSTONE_BINARY_EXECUTABLE,HAILSTONE_BINARY_CALLING_PLUGIN}),
+          "replacement challenge did not independently measure native binaries");
+    replacement.addon.pulse();server::Report native;
+    check(replacement.sent.size()==1&&server::decode(replacement.report(),native)&&native.nonce==800,
+          "replacement challenge sent stale legacy data instead of the current native report");
+}
+void legacy_reentrant_submission() {
+    Rig recursion;recursion.select();
+    recursion.during_send=[&]{recursion.addon.world_outgoing(integrity::opcode);outgoing_milestones(recursion);recursion.addon.pulse();};
+    recursion.addon.world_outgoing(legacy_milestones.front());
+    check(recursion.sent.size()==1&&recursion.measured.size()==1&&recursion.addon.legacy_attempts()==1&&recursion.addon.legacy_submitted(),
+          "own outbound integrity or milestone/pulse reentry recursively submitted legacy data");
+    for(const bool admit:{false,true}) {
+        Rig retired;retired.select();retired.admit=admit;retired.during_send=[&]{retired.addon.peer(false);};
+        retired.addon.world_outgoing(legacy_milestones.front());
+        check(retired.addon.status()==integrity::Status::Inactive&&!retired.addon.legacy_submitted()&&retired.addon.legacy_attempts()==0,
+              "legacy send completion restored state from a retired peer session");
+    }
+    Rig fresh;fresh.select();bool reset=false;
+    fresh.during_send=[&]{if(!reset){reset=true;fresh.addon.peer(false);fresh.select();}};
+    fresh.addon.world_outgoing(legacy_milestones.front());
+    check(fresh.addon.status()==integrity::Status::Waiting&&!fresh.addon.legacy_submitted(),
+          "old legacy completion overwrote a new selected session");
+    fresh.addon.world_outgoing(legacy_milestones.back());
+    check(fresh.sent.size()==2&&fresh.measured.size()==2&&fresh.addon.legacy_submitted(),
+          "fresh session could not submit after reentrant retirement of its predecessor");
+    Rig replacement;replacement.select();bool changed=false;
+    replacement.during_send=[&]{if(!changed){changed=true;replacement.issue(801);}};
+    replacement.addon.world_outgoing(legacy_milestones.front());
+    check(replacement.sent.size()==1&&replacement.report().size()==16&&replacement.addon.status()==integrity::Status::Queued&&
+          !replacement.addon.legacy_submitted()&&!replacement.addon.report_sent(),
+          "legacy send completion defeated the current reentrant native challenge");
+    replacement.addon.pulse();server::Report native;
+    check(replacement.sent.size()==2&&server::decode(replacement.report(),native)&&native.nonce==801,
+          "native challenge replacement did not send its actual current report after a legacy submission");
+    outgoing_milestones(replacement);check(replacement.sent.size()==2,"native replacement did not suppress later legacy milestones");
+    Rig unsupported;unsupported.select();bool challenged=false;
+    unsupported.during_send=[&]{if(!challenged){challenged=true;auto bytes=server::challenge(802);put(bytes,24,integrity::features|(1ull<<63),8);unsupported.deliver(bytes);}};
+    unsupported.addon.world_outgoing(legacy_milestones.front());outgoing_milestones(unsupported);unsupported.addon.pulse();
+    check(unsupported.sent.size()==1&&unsupported.addon.status()==integrity::Status::Unsupported&&
+          !unsupported.addon.legacy_submitted()&&!unsupported.addon.report_sent(),
+          "legacy send completion downgraded a reentrant valid unsupported native challenge");
+}
 } // namespace
 int main() {
     try {
         actual_wire_and_server_acceptance();parser_and_legacy_routing();acknowledgement_binding();retry_timeout_and_reentrant_send();measurement_and_clock_failure();
+        legacy_wire_and_milestones();legacy_retries_and_snapshot();legacy_measurement_failures_and_new_session();
+        valid_v3_prevents_legacy_downgrade();malformed_v3_does_not_disable_legacy();legacy_reentrant_measurement();legacy_reentrant_submission();
         std::cout<<"Binary integrity: "<<citadel_test::checks<<" checks passed\n";return 0;
     } catch(const std::exception& error) {std::cerr<<"Binary integrity after "<<citadel_test::checks<<" checks: "<<error.what()<<'\n';return 1;}
 }

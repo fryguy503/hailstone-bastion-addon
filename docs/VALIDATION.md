@@ -1,5 +1,31 @@
 # Preview validation — 2026-11-17
 
+## Preview 4 legacy DLL integrity
+
+The addon uses the existing CIT1 version 2 DLL slot with the measured loaded-addon FNV63 checksum.
+It submits synchronously before a WORLD login checksum or EnterWorld, measures once per login,
+retries the cached body at most three times, and gives a valid version 3 challenge precedence.
+Legacy submission cannot display server acceptance because that protocol has no acknowledgement.
+
+| Check | Result |
+|---|---|
+| Windows x64 MSVC, public upstream SDK snapshot | 32/32 CTest suites passed: 19 C++, 12 Lua and the approval-tool suite |
+| Linux GCC, ASan/UBSan | 20/20 suites passed: 19 C++ and the approval-tool suite; no sanitizer findings |
+| Integrity wire, retries, protocol preference and reentrant session resets | 672 fixture checks passed on both native builds |
+| Plugin routing and late-login fallback | 91 fixture checks passed on Windows |
+| Both UI packs with current Hailstone `55f668c0` helpers | All 12 Lua suites passed; hub suite includes 6,426 checks |
+| Legacy checksum/approval tool | 12 Python tests passed on Windows and Linux |
+
+The SDK remains the checked-in upstream `6446875a` snapshot. Packet tests use controlled host
+measurements and send callbacks; they verify synchronous dispatch and preserve the original login
+packet. The approval tool separately measures the built DLL and prepares append-only `crc_dll` SQL.
+Its SQL predicate is exercised with SQLite compatibility functions, not a live MySQL database.
+
+No Hailstone core rebuild, production-profile installation, server configuration change or live
+login was performed for Preview 4. A real login with this DLL approved in `variables.crc_dll`
+remains necessary to confirm deployed-server acceptance. Earlier GPU/performance evidence below
+belongs to the stated earlier builds.
+
 ## Preview 3 on upstream Hailstone
 
 Windows x64 MSVC passed all 31 add-on suites with warnings treated as errors. These include native

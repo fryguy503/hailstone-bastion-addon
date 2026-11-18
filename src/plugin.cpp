@@ -175,6 +175,12 @@ int packet(int stream,int direction,HailstonePacket* p) {
             }
         }
         if(selected && direction==HAILSTONE_IN && integrity.packet(p->opcode,p->data,p->size)) return 1;
+        if(direction==HAILSTONE_OUT && bastion::integrity::login_checkpoint(p->opcode)) {
+            // Late consent may load the addon after LogServer but before EnterWorld.
+            // Only the exact official endpoint can fill in a missed announcement.
+            if(!selected && !saw_world_announcement && official_world()) peer(true);
+            if(selected) integrity.world_outgoing(p->opcode);
+        }
     }
     if(!selected || stream!=HAILSTONE_STREAM_ZONE || direction!=HAILSTONE_IN) return 0;
     if(p->opcode==0x7d20) { kinbound.receive(p->data,p->size); return 1; }

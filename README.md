@@ -4,7 +4,7 @@ A standalone Bastion addon with native Hailstone Lua windows for Modern and Game
 Open **`/bastion`** for tools, character settings, and the searchable server command catalog.
 `/citadel` and `/cit` remain compatible aliases.
 
-Preview 3 targets upstream Hailstone `6446875a`, including its public server add-on services,
+Preview 4 targets upstream Hailstone `6446875a`, including its public server add-on services,
 modular UI extensions and map ownership. The map-local filter panel uses `hs.UI` 1.5.
 Hailstone builds missing those services can load the addon with its Bastion features inactive.
 
@@ -25,14 +25,14 @@ Hailstone builds missing those services can load the addon with its Bastion feat
 | Encounter telegraphs | Ground-conforming shapes, coral/blue/gold/mint roles, fine white glyphs, clean boundaries, compact impact clocks, restrained urgency pulses and a high-contrast preset. Surface checks follow the rendered terrain and props. Required warnings retain their visibility floor. |
 | Firefell | FFZ1 current-instance negotiation and naming for zone 406, versions 249–255. Old context cannot label a later instance. |
 | Server shortcuts | DLL-compatible slash shortcuts and a 205-entry registered server/quest command catalog, with staff access labels, search, help, copy, and explicit argument preparation/send. |
-| Native integration checks | Negotiated server reporting of the actual Hailstone executable and loaded addon hashes, reviewed binary-pair approval, and explicit acknowledgement status in Settings. Existing game-file checks continue. |
+| Native integration checks | The existing DLL check receives the actual loaded `bastion.dll` checksum before login file checks. Newer servers can challenge the actual Hailstone executable/addon pair. Settings distinguish an unconfirmed legacy submission from explicit native acceptance. Existing game-file checks continue. |
 | Stock Raid window | Delegate Raid Manager List/Grant/Revoke buttons beside the selected member's actions, with reviewed requests and server replies in chat. These controls work independently of the raid-bar overlay. |
 
 Sentinel, nameplates and extended spell IDs are supplied by their existing addons or Hailstone itself.
 No Item Search is bundled.
 
 See the [parity review](docs/PARITY.md) for gaps found, the [validation report](docs/VALIDATION.md),
-and the [integrity integration guide](docs/INTEGRITY.md) for the matching server patch and build approval procedure.
+and the [integrity integration guide](docs/INTEGRITY.md) for DLL allowlist approval and the optional newer server protocol.
 The [performance review](docs/PERFORMANCE.md) records the map-stall fix, hidden-window work,
 measured costs and remaining live acceptance limits.
 
@@ -100,7 +100,9 @@ Lua windows, license and documentation. Build output and signing keys do not bel
 
 ## Acceptance limits
 
-Live acceptance requires an ordinary-account login. Servers enforcing CIT1 version 3 native integrity
+Live acceptance requires an ordinary-account login. Servers enforcing the existing DLL check must
+allowlist the exact `bastion.dll` checksum alongside approved legacy DLLs. That protocol has no acknowledgement.
+Servers enforcing CIT1 version 3 native integrity
 must approve the exact executable and addon pair. Raidwide mana and endurance remain unavailable when
 the server does not supply them. Legacy subgroup promotion uses the existing Bastion command, whose
 deployed handler still needs confirmation.
