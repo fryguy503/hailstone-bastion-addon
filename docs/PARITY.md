@@ -57,6 +57,32 @@ integration was reference material; the standalone addon does not link it or req
   verifies an approved SHA256 pair, and acknowledges acceptance explicitly. The companion server
   patch keeps existing game-file checks and legacy handling. See [the integration guide](INTEGRITY.md).
 
+## Song twisting and fast camp
+
+Preview 6 adds an independently implemented Citadel song scheduler. The inspected DLL enables
+only memorized song gems 1–12; its item/AA entries are explicitly disabled despite older help
+comments. Queues retain duplicates and accept up to 31 entries. One-shot queues preserve the
+interrupted rotation, `/sing` holds a gem, and stop/resume, clear/reset, delay/adjust/recast,
+quiet, reload and runtime debug controls accompany `Twist.Twisting`, `Current`, `Next` and `List`.
+Historical Citadel duration formulas use the raw spell formula and cap from the companion host;
+the addon's timing does not substitute the host's approximate display duration. Manual casting
+or `/melody` relinquishes the addon scheduler. Zoning never starts it automatically.
+
+Bastion's server offers fast camp only when its current zone allows it, then checks eligibility
+again when the player accepts. The inspected DLL's `INSTANT_CAMP` entry is a stock key-binding
+name forwarded to the original client, with no custom timer patch or fast-camp preference.
+`/fastcamp` uses normal native camping and accepts only the exact eligible server offer for that
+camp. The optional character setting applies the same behavior to ordinary `/camp`; it starts
+off. A missing offer preserves the normal countdown. Popup and camp tokens, current actor
+identity and action permissions are rechecked before responding. No global fast-camp preference
+or unconditional early Logout is used by the addon. The existing host `game.fast_camp` option
+remains the player's setting; the normal-countdown tests use its default off value.
+
+The companion client adds generic raw spell-duration members and token-bound popup read/answer
+services. It permits popup answers during camping and classifies an actually completed,
+explicitly accepted camp through the normal camp destination path. Server popup IDs and
+eligibility policy remain in the addon. Older hosts report missing support without guessing.
+
 ## Presentation changes
 
 Telegraphs share a coral/blue/gold/mint role palette, fine white semantic glyphs, restrained boundaries,

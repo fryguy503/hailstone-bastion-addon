@@ -12,7 +12,7 @@ p = argparse.ArgumentParser()
 p.add_argument('--client', type=pathlib.Path, required=True, help='Hailstone checkout with tools/make_addon.py')
 p.add_argument('--build', type=pathlib.Path, default=root / 'build')
 p.add_argument('--platform', required=True)
-p.add_argument('--version', default='0.1.0-preview.5')
+p.add_argument('--version', default='0.1.0-preview.6')
 p.add_argument('--out', type=pathlib.Path, default=root / 'release')
 a = p.parse_args()
 build = a.build.resolve()
@@ -32,6 +32,9 @@ with tempfile.TemporaryDirectory(prefix='bastion-package-', dir=build) as tempor
     for filename in ('README.md', 'LICENSE', 'CHANGELOG.md', 'THIRD_PARTY.md'):
         shutil.copy2(root / filename, stage / filename)
     shutil.copy2(root / 'sdk' / 'LICENSE', stage / 'HAILSTONE-SDK-LICENSE.txt')
+    (stage / 'sdk').mkdir()
+    shutil.copy2(root / 'sdk' / 'README.md', stage / 'sdk' / 'README.md')
+    shutil.copy2(root / 'sdk' / 'LICENSE', stage / 'sdk' / 'LICENSE')
     subprocess.run([sys.executable, str(tool), '--name', 'bastion', '--kind', 'plugin',
         '--version', a.version, '--min-client', '0.7.1-beta', '--author', 'Fryguy',
         '--description', 'Bastion server tools, settings, raid bars and encounter displays.',

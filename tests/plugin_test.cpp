@@ -51,6 +51,8 @@ int main() { try {
     InitializePlugin(); SetGameState(GAMESTATE_INGAME);
     const auto* hooks=hailstone_plugin_hooks();
     check(hooks && hooks->map_visible && hooks->map_policy && hooks->merchant_right_click,"missing extension hooks");
+    check(hooks->command_line("/twist 1 2")==nullptr && hooks->command_line("/fastcamp")==nullptr,
+          "server-specific song or camp commands activated before announcement");
     constexpr auto policy_flags=HAILSTONE_MAP_POLICY_CUSTOM_SPAWNS|HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS|
                                 HAILSTONE_MAP_POLICY_DISABLE_NPC_FIND;
     HailstoneMapPolicy policy{};policy.size=sizeof(policy);
@@ -60,6 +62,9 @@ int main() { try {
     Bytes data(560); text(data,36,"BasDev"); HailstonePacket p{}; p.opcode=0x7ceb; p.data=reinterpret_cast<std::uint8_t*>(data.data()); p.size=data.size();
     OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_IN,&p);
     check(hooks->map_visible(&s,0)==0,"selected peer lost visibility policy");
+    check(h.functions.contains("twist") && h.functions.contains("fast_camp"),"new module callbacks missing");
+    for(const auto* line:{"/twist help","/sing 1","/stoptwist","/fastcamp","/citadel twist help","/bastion stoptwist","/cit fastcamp cancel"})
+        check(hooks->command_line(line)!=nullptr,"song/camp command alias escaped addon routing");
     check(hooks->map_policy(&policy)==1&&policy.flags==policy_flags&&std::string(policy.name)=="Bastion",
           "selected peer did not publish its authoritative map presentation policy");
     OnBeginZone();policy={};policy.size=sizeof(policy);
@@ -98,6 +103,8 @@ int main() { try {
     p.opcode=0x7d1d; check(!OnPacket(HAILSTONE_STREAM_ZONE,HAILSTONE_IN,&p),"nameplate stream consumed");
     data.assign(560,std::byte{}); text(data,36,"OtherWorld"); p.opcode=0x7ceb; p.data=reinterpret_cast<std::uint8_t*>(data.data()); p.size=data.size();
     OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_IN,&p); check(hooks->map_visible(&s,0)==-1,"world switch leaked policy");
+    check(hooks->command_line("/twist 1 2")==nullptr && hooks->command_line("/fastcamp")==nullptr,
+          "server-specific song or camp command survived a world switch");
     policy={};policy.size=sizeof(policy);
     check(hooks->map_policy(&policy)==0&&policy.flags==0,"non-Bastion world retained stock-map restrictions");
     ShutdownPlugin(); check(h.functions.empty(),"unload left UI callbacks");

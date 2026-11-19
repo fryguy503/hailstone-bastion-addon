@@ -1,5 +1,48 @@
 # Preview validation — 2026-11-17
 
+## Preview 6 song twisting and fast camp — 2026-11-19
+
+| Check | Result |
+|---|---|
+| Windows x64 MSVC addon | 34/34 CTest suites passed, warning-free |
+| Linux addon, ASan/UBSan | 22/22 suites passed; no sanitizer findings |
+| Citadel twist scheduler | 645 focused checks, including strict GCC sanitizer/leak coverage |
+| Server-offered fast camp | 195 focused Windows checks, compiled with `/W4 /WX` |
+| Both UI packs with native client helpers | Hub suite passed 7,055 checks; all 12 UI suites passed |
+| Actual native loader, spell commands, casting gauge and loopback transport | Two CastSpell receipts in gem-slot order 0, 1; active manual cast protected; `/stoptwist` stopped the scheduler |
+| Actual native server-offered camp | Default-off and unrelated offers ignored; exactly one `{0, 2000000002}` popup response; zero early Logout packets; received server disconnect completed cleanly with destination 2 |
+| Companion client, Windows MSVC with browser off | Full suite: 3,977 cases, 1,728,702 assertions, 74 optional skips; focused API/network checks: 48 cases and 5,522 assertions |
+
+The schedulers cover gem ordering/duplicates, once/hold/resume, historical durations, recast
+timing, missed notes, manual-cast protection, permissions, reentrant observations and cached
+character settings. WORLD zoning preserves a same-character passive twist queue without
+starting it; other character/server identities clear it. Fast camp checks exact offer IDs,
+native camp/dialog tokens, actor incarnation and opaque connection context. Existing camps,
+stale/replaced offers, cancellation, expiry and missing services keep the normal camp path.
+Lifecycle changes also clear old status/error copy from both Settings sections.
+Camp transport tests use the host's existing `game.fast_camp` option at its default off value;
+the addon leaves a player's separately enabled global option unchanged.
+
+The native fixture uses the real plugin loader and SDK table, MQ registry, stock casting gauge,
+GameConnection and SOE transport with isolated generated character/spell records. Popup tokens
+retire on zone/connection changes; a validated current-session server disconnect completes the
+accepted camp, while malformed packets, timeouts and socket loss remain separate. The measured
+loaded DLL matches the release digest below. No GPU or live player profile is involved.
+Incoming cast/popup records use the native packet-test entry and actual decoders; outgoing
+casts, Camp and PopupResponse plus the final server disconnect use real loopback UDP.
+The tested companion client source is `074401a11bde6d6c06ea92aecf11492bbf39c438`.
+Optional asset/vector cases remain skipped when their external inputs are absent.
+
+Inactive schedulers perform zero host observations; active polls are bounded to 100 ms.
+These checks do not measure live raid frame times. Live Bastion song behavior, server zone
+eligibility and controller interaction still need gameplay acceptance. No production server
+configuration or database was changed.
+
+The Windows DLL is 876,032 bytes, SHA256
+`5a486fc92dd07539fee018b84808e756c1c16c7b36cc006dfd34a34e037bb9b0`.
+Its measured legacy `crc_dll` value is `7645740817213870030`; the release includes review-only
+append approval SQL and JSON measurements. A fresh approved login remains necessary.
+
 ## Preview 5 login and zoning correction — 2026-11-18
 
 | Check | Result |

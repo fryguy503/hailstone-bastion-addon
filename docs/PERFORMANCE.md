@@ -1,5 +1,17 @@
 # Performance review — 2026-11-17
 
+## Preview 6 song and camp additions — 2026-11-19
+
+The new schedulers are separate from map, inventory and raid drawing. Inactive twist and
+unarmed fast camp return before reading the host clock, character, spells, popups or files.
+Active observations are limited to one polling step per 100 ms; twist queues contain at most
+31 entries, and fast-camp requests expire with the current camp. Character settings load on
+lifecycle changes or explicit operations, not per-frame UI drawing. The hub requests their
+small cached state records only on its visible Settings page. No action runs while painting.
+
+These are implementation bounds and regression-test expectations, not new live frame-rate
+measurements. The earlier map/raid fixture measurements below describe their original builds.
+
 This review responds to map open/close freezes, an Inventory callback stopped after 5,000 ms,
 and the raid overlay's missing `HorizontalScrollbar` flag. The live report used a two-member raid.
 The large-raid map regression below is reproduced; the particular live Inventory timeout is not.

@@ -33,6 +33,7 @@ add_library(bastion_core STATIC
   src/saved_expeditions_protocol.cpp src/saved_expeditions_addon.cpp
   src/pet_inventory_protocol.cpp src/pet_inventory_addon.cpp)
 target_sources(bastion_core PRIVATE src/firefell.cpp src/server_commands.cpp src/kinbound.cpp src/integrity.cpp
+  src/twist.cpp src/fast_camp.cpp
   src/gear_score_protocol.cpp src/gear_score_state.cpp src/gear_score_addon.cpp
   src/home_city_protocol.cpp src/home_city_addon.cpp
   src/telegraphs_protocol.cpp src/telegraphs_state.cpp src/telegraphs_geometry.cpp src/telegraphs_adapter.cpp src/telegraphs_controls.cpp)
@@ -63,7 +64,7 @@ install(TARGETS bastion LIBRARY DESTINATION . RUNTIME DESTINATION .)
 install(DIRECTORY ui DESTINATION .)
 if(BUILD_TESTING)
   foreach(kind IN ITEMS follow_addon raidbars factions saved_expeditions pet_inventory citadel firefell server_commands
-      kinbound gear_score gear_score_addon home_city telegraphs telegraphs_geometry telegraphs_adapter integrity character_directory)
+      kinbound gear_score gear_score_addon home_city telegraphs telegraphs_geometry telegraphs_adapter integrity character_directory twist fast_camp)
     add_executable(bastion_${kind}_tests tests/${kind}_test.cpp)
     target_link_libraries(bastion_${kind}_tests PRIVATE bastion_core)
     bastion_warnings(bastion_${kind}_tests)

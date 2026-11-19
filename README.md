@@ -4,15 +4,18 @@ A standalone Bastion addon with native Hailstone Lua windows for Modern and Game
 Open **`/bastion`** for tools, character settings, and the searchable server command catalog.
 `/citadel` and `/cit` remain compatible aliases.
 
-Preview 5 targets upstream Hailstone `6446875a`, including its public server add-on services,
-modular UI extensions and map ownership. The map-local filter panel uses `hs.UI` 1.5.
-Hailstone builds missing those services can load the addon with its Bastion features inactive.
+Preview 6 uses Hailstone's server add-on services, modular UI extensions and map ownership.
+The map-local filter panel uses `hs.UI` 1.5. Citadel song timing and server-approved fast camp
+also need the companion client update described in [SDK compatibility](sdk/README.md).
+Older compatible clients retain the other tools and report unsupported new services explicitly.
 
 ## Included
 
 | Feature | Behavior |
 |---|---|
 | Enhanced Citadel follow | Manual start/stop, outside-group player following, configurable distance, movement cancellation, smooth steering/pitch, optional instant mount response. Direct follow does not route around obstacles. |
+| Citadel song twisting | Song-gem queues, one-shot interruptions, hold, resume, timing controls and the `Twist` data object. Quiet messages and non-bard use are character settings; native casting permissions still apply. |
+| Fast camp | `/fastcamp` requests a camp and accepts Bastion's eligible-zone offer. The server remains authoritative; ordinary camping retains its countdown when no offer arrives. |
 | Right-click merchant selling | **Off by default.** A deliberate inventory right-click while shopping sells the whole stack using Bastion's protocol. Occupied cursor, bags, unrelated slots and invalid merchant contexts retain the host's guarded behavior. |
 | Maps | **Map controls → Bastion filters** selects group members, raid names, NPCs, merchants, other players and corpses. Tracking permissions and Citadel's reduced planar NPC/corpse range still apply. Stock NPC overlays and NPC Find stay disabled. Self, terrain, labels, pins and other-server stock preferences are preserved. Ordinary unrelated players remain unnamed. |
 | Raid bars | Native Lua group cards or class grid, HP/class filters, class colors/roles, known resource bars, pets, targeting, explicit management, Delegate Raid Manager List/Grant/Revoke controls, edit/resize, scrolling and per-character settings. |
@@ -47,6 +50,12 @@ measured costs and remaining live acceptance limits.
 /follow distance 15
 /follow on
 /follow off
+/twist 1 2 3
+/twist once 4 5
+/sing 3
+/stoptwist
+/twist start
+/fastcamp
 /rightclicksell on
 /faction [partial name]
 /outputfile faction [filename]
@@ -69,6 +78,17 @@ not execute it. The server determines whether a submitted command is permitted.
 
 Settings are kept in Hailstone's own per-server/per-character plugin directories. Faction exports
 go into the addon's `exports` directory. Nothing writes to the player's game asset folder.
+
+Song twisting uses gems 1–12 and queues of up to 31 entries. `/twist delay 33` sets the interval
+in tenths of a second, `/twist adjust 1` sets the long-song refresh lead in ticks, and
+`/twist recast 0` sets the recast adjustment in tenths. `/twist help` lists the controls.
+Manual `/cast`, `/stopcast`, `/stopsong` or `/melody` releases the addon scheduler; zoning requires
+an explicit resume. Citadel's current DLL disables item/AA twisting, so this port does too.
+
+Fast camp is explicit through `/fastcamp`, or optional through **Settings → Camping**.
+`/fastcamp server` and `/fastcamp desktop` preserve native camp destinations. `/fastcamp cancel`
+leaves the normal countdown running. The server decides whether fast camp is available.
+
 Start the addon before world login to receive the server announcement and any early protocol messages.
 If it first loads at zone-in or is reloaded in a zone, it can also activate for Bastion - Production
 through the official Bastion login server. Its DLL check then requires returning to the login screen

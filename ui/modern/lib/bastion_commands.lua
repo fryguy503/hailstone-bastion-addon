@@ -17,6 +17,10 @@ local localCommands={
   {name="/telegraphs",help="Open encounter appearance and previews. status | on | off | opacity <0-100> | color <role> <AARRGGBB> | reload | hello | clear | selftest | test <shape|all|palette>.",tool="telegraphs"},
   {name="/firefell",help="Show the current Firefell instance name, version and received context.",tool="firefell"},
   {name="/rightclicksell",help="on | off | toggle. Disabled by default; a merchant right-click sells the carried item's whole stack. Bags retain ordinary behavior."},
+  {name="/twist",help="Queue song gems 1–12: /twist 1 2 3. once <gems> | hold <gem> | start | stop | clear | reset | quiet | delay <tenths> | adjust <ticks> | recast <tenths>. /twist help lists all controls."},
+  {name="/sing",help="Hold one song gem. /sing 3 is the same as /twist hold 3."},
+  {name="/stoptwist",help="Stop the current twist and song. /twist start resumes the retained queue."},
+  {name="/fastcamp",help="Request a camp and accept Bastion's eligible offer. server | desktop selects the destination; cancel keeps the normal countdown; on | off changes the character preference. The server controls eligibility."},
   {name="/bastion maps",help="raid | mobs | merchants | players | corpses on | off. NPCs require trained Tracking and Citadel's range."},
   {name="/kinbound",help="Forward #kinbound to Bastion. Put the item on your cursor and follow the server's attunement confirmation."},
 }

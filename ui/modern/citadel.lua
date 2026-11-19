@@ -5,6 +5,8 @@ local C=R.C
 local Commands=dofile("lib/bastion_commands.lua")
 local Integrity=dofile("lib/bastion_integrity.lua")
 local MapFilters=dofile("lib/map_filters.lua")
+local Twist=dofile("lib/bastion_twist.lua")
+local FastCamp=dofile("lib/bastion_fast_camp.lua")
 BASTION_UI=BASTION_UI or{}
 local lastOpen,page=nil,1
 local character={
@@ -66,10 +68,14 @@ local function settings(p,s)
   columns("bastion-settings",function()
     C.section("Map")
     MapFilters.draw_settings(p,s,C)
+    ui.Dummy(0,6*R.s)
+    FastCamp.draw(p,R)
   end,function()
     C.section("Merchant")
     toggle(p,s,"right_click_sell","Right-click selling")
     C.note("Off by default. Sells the whole stack while shopping.","muted")
+    ui.Dummy(0,6*R.s)
+    Twist.draw(p,R)
     ui.Dummy(0,6*R.s)
     C.section("Tool settings")
     launchers(p,{{"Follow settings","citadel_follow","Distance & movement"},{"Raid bar settings","raidbars","Layout & controls"},{"Telegraph appearance","telegraphs","Colors & previews"}})
@@ -89,7 +95,7 @@ ui.window("Bastion",function()
   if not s.shown then return end
   s=p.citadel("state")
   if not s or not s.active or not s.shown then return end
-  local height=page==3 and 820 or page==1 and s.panel=="firefell"and 640 or 520
+  local height=page==3 and 820 or page==2 and 690 or page==1 and s.panel=="firefell"and 640 or 520
   local visible,open=R.begin("Bastion",page==3 and 1100 or 900,height)
   if visible then
     ui.PushStyleVar(ui.StyleVar.ItemSpacing,8*C.scale(),5*C.scale())

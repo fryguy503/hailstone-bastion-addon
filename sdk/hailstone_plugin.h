@@ -477,6 +477,7 @@ typedef struct HailstonePlayer {
     uint32_t observation_flags; /* HAILSTONE_PLAYER_* flags */
 } HailstonePlayer;
 #define HAILSTONE_PLAYER_PROMPT_SAFE 16u
+#define HAILSTONE_PLAYER_CAMPING 2u /* READ: a current native camp is in progress; clears on cancellation/zone exit */
 
 typedef struct HailstoneSpawn {
     uint32_t size;
@@ -568,6 +569,18 @@ typedef struct HailstoneSpell {
     int32_t is_skill;
     uint32_t gem_icon;
 } HailstoneSpell;
+
+/* A received game popup, never the native-code consent question. Tokens are host-issued and change for every
+ * replacement, even when the server reuses its popup IDs. camp_token is nonzero only for a dialog received during
+ * the still-current camp. remaining_ms is UINT32_MAX without a deadline; expired dialogs are unavailable. */
+#define HAILSTONE_LARGE_DIALOG_YES_NO 1u
+#define HAILSTONE_LARGE_DIALOG_CAMPING 2u
+#define HAILSTONE_DIALOG_EXPECT_CAMP_DISCONNECT 1u
+typedef struct HailstoneLargeDialog {
+    uint32_t size, flags;
+    uint64_t token, camp_token;
+    uint32_t popup_id, negative_id, close_id, remaining_ms;
+} HailstoneLargeDialog;
 
 typedef struct HailstoneItem {
     uint32_t size;
@@ -980,6 +993,24 @@ typedef struct PluginHostApi {
     int (*measure_binary)(void* host, uint32_t kind, HailstoneBinaryMeasurement* out);
     /* READ. Current aggregate map policy. Initialize out->size; zero flags is stock. */
     int (*get_map_policy)(void* host, HailstoneMapPolicy* out);
+    /* EXTEND: the server's name for a player class (1-16), shown wherever the client names the class (the
+     * inventory, group and raid windows, /who, character select, ${Me.Class}, ...), and its short name ("VAN",
+     * shown where the client abbreviates); a guildmaster of the class (20-35) reads "<name> Guildmaster". NULL or ""
+     * shows the stock name. Display only: class ids, class checks and packets stay the stock ones. At most 32 bytes
+     * for the name and 4 for the short name, no control characters: a longer name or another class id is refused
+     * (nothing changes; the first refusal writes a line in the log). The names are the plugin's: they go when it
+     * unloads, when the server's rules take `extend` away, and when the session leaves the server. When two plugins
+     * or scripts name one class the latest call wins; a call with both empty takes this plugin's back. Added later
+     * in ABI 3: test HAILSTONE_HOST_HAS(host, set_class_name) first. */
+    void (*set_class_name)(void* host, uint32_t class_id, const char* name, const char* short_name);
+    /* READ: current received game popup, 1 available, 0 none/expired. Initialize out->size. */
+    int (*get_large_dialog)(void* host, HailstoneLargeDialog* out);
+    /* ACTIONS: answer this exact current popup once: button 0 OK, 1 Yes, 2 No, 3 close. Returns 1 consumed (and
+     * queued when its ID is nonzero), 0 stale, expired, invalid, denied or send refused. With
+     * EXPECT_CAMP_DISCONNECT, also requires active EXTEND, Yes, and the snapshot's nonzero current camp_token.
+     * That hint only classifies an actual subsequent camp disconnect; it never sends Logout, advances a timer or
+     * asserts server acceptance. A rejected offer keeps the ordinary camp running. Other flags are refused. */
+    int (*answer_large_dialog)(void* host, uint64_t token, uint64_t camp_token, int32_t button, uint32_t flags);
 } PluginHostApi;
 /* What use_ability and ability_state take: the kinds of ability the Ability Book lists. The values are stable. */
 enum HS_AbilityKinds {

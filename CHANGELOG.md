@@ -1,5 +1,13 @@
 # Changes
 
+## 0.1.0-preview.6
+
+- Add Citadel song twisting: gem queues, once/hold/resume controls, historical timing, quiet settings and the `Twist` data object.
+- Yield to manual casts and native melody; stop across character, zone and permission changes without starting automatically.
+- Add `/fastcamp` and optional server-offered fast camp using the native camp destination and normal-countdown fallback.
+- Add compact twist and camping controls to both Settings pages and include all new commands in the command browser.
+- Use the companion client's token-bound popup services and raw duration fields, with explicit fallback on older hosts.
+
 ## 0.1.0-preview.5
 
 - Keep the original login verification state across zone transfers instead of submitting a fresh report that the server intentionally ignores while zoning.
