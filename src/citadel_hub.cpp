@@ -135,24 +135,30 @@ float CitadelHub::tracking_range() const {
     return std::floor(static_cast<float>(200 + skill*20 + technique) * .2f);
 }
 int CitadelHub::map_policy(HailstoneMapPolicy* out) const {
-    if (!selected_ || !out || out->size<sizeof(*out)) return 0;
-    HailstoneMapPolicy policy{};policy.size=sizeof(policy);
+    constexpr auto legacy_size=offsetof(HailstoneMapPolicy,npc_find_mode);
+    if (!selected_ || !out || out->size<legacy_size) return 0;
+    const bool server_find=out->size>=sizeof(*out);
+    HailstoneMapPolicy policy{};
+    policy.size=static_cast<std::uint32_t>(server_find ? sizeof(policy) : legacy_size);
     policy.revision=map_revision_;
-    policy.flags=HAILSTONE_MAP_POLICY_CUSTOM_SPAWNS|HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS|HAILSTONE_MAP_POLICY_DISABLE_NPC_FIND;
-    std::memcpy(policy.name,"Bastion",8);*out=policy;return 1;
+    policy.flags=HAILSTONE_MAP_POLICY_CUSTOM_SPAWNS|HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS;
+    if (server_find) policy.npc_find_mode=HAILSTONE_NPC_FIND_SERVER_ONLY;
+    else policy.flags|=HAILSTONE_MAP_POLICY_DISABLE_NPC_FIND;
+    std::memcpy(policy.name,"Bastion",8);
+    std::memcpy(out,&policy,policy.size);
+    return 1;
 }
 int CitadelHub::map_visible(const HailstoneSpawn* actor,std::uint32_t purpose) const {
     if (!selected_) return -1;
     if (!in_game_ || !actor || actor->size<offsetof(HailstoneSpawn,incarnation)+sizeof(actor->incarnation) ||
         !actor->incarnation || !HAILSTONE_HOST_HAS(host_,get_player) || !HAILSTONE_HOST_HAS(host_,get_spawn)) return 0;
-    // Stock Find also feeds its own NPC diamonds and navigation. Bastion owns
-    // those locations exclusively through its marker layer, including for GMs.
-    if (purpose==HAILSTONE_MAP_FIND && (actor->is_npc || actor->is_corpse)) return 0;
     HailstonePlayer player{}; player.size=sizeof(player);
     HailstoneSpawn me{}; me.size=sizeof(me);
     if (!host_->get_player(host_->host,&player) || !player.in_zone || !host_->get_spawn(host_->host,player.spawn_id,&me)) {
         retire_map_raid(); return 0;
     }
+    // Hailstone checks the server's Find list before calling this hook for an NPC.
+    if (purpose==HAILSTONE_MAP_FIND && (actor->is_npc || actor->is_corpse)) return !actor->is_corpse;
     if (actor->id==player.spawn_id) return 1;
     const bool pc=!actor->is_npc && !actor->is_corpse;
     if (pc && actor->in_group) {

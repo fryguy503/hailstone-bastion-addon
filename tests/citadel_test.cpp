@@ -132,8 +132,9 @@ void maps() {
     HailstoneMapSpawn m{}; m.size=sizeof(m); m.color=0x123456;
     check(r.hub.map_spawn(&npc,&m)==1,"planar tracking boundary or merchant filter broken");
     check(m.color==0x123456,"map lost con color");
-    check(r.hub.map_visible(&npc,HAILSTONE_MAP_FIND)==0,"eligible Bastion marker leaked into stock NPC Find");
-    npc.x=242.01f; check(r.hub.map_visible(&npc,HAILSTONE_MAP_FIND)==0,"Find bypasses tracking range");
+    npc.x=242.01f;
+    check(r.hub.map_visible(&npc,HAILSTONE_MAP_MARKER)==0,"merchant marker exceeded Bastion tracking range");
+    check(r.hub.map_visible(&npc,HAILSTONE_MAP_FIND)==1,"Tracking range denied server Find");
     r.technique=7864; npc.x=252; check(r.hub.map_spawn(&npc,&m)==1,"memorized technique absent");
     npc.x=1240; check(r.hub.map_spawn(&npc,&m)==0,"missing one-fifth multiplier");
     r.player.class_id=2; npc.x=1; check(r.hub.map_visible(&npc,HAILSTONE_MAP_MARKER)==0,"nontracker NPC reveal");
@@ -150,7 +151,6 @@ void map_tracking_policy() {
     for(const auto class_id:{4u,6u,8u}) {
         r.player.class_id=class_id;
         check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"trained tracking class lost its planar boundary marker");
-        check(r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==0,"tracking class could use the stock NPC Find provider");
         actor.x=242.01f;
         check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"marker exceeded Bastion tracking range");
         actor.x=242;
@@ -331,7 +331,7 @@ void map_raid_cache_reentrancy() {
     HailstoneMapSpawn mark{};mark.size=sizeof(mark);
     check(r.hub.map_spawn(&actor,&mark)==0,"zoning during a roster query painted a retired marker");
 }
-void map_lifecycle_and_find_exclusion() {
+void map_lifecycle_and_server_find() {
     Rig r;auto actor=map_actor();actor.x=1;
     r.me.is_gm=1;actor.in_group=1;
     const auto incarnation=actor.incarnation;actor.incarnation=0;
@@ -347,10 +347,14 @@ void map_lifecycle_and_find_exclusion() {
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"GM bypassed an explicit disabled NPC category");
     check(r.hub.command("maps mobs on")&&r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,
           "GM lost range bypass for an enabled NPC category");
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==0,"GM or group state bypassed disabled stock NPC Find");
+    r.me.is_gm=0;actor.in_group=0;r.player.class_id=2;r.tracking_skill=0;
+    r.call("set","map_mobs",0);
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"server Find changed marker admission");
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==1,"server Find depended on map filters or Tracking");
+    r.me.is_gm=1;r.call("set","map_mobs",1);
     actor.is_corpse=1;
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"GM bypassed its disabled corpse category");
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==0,"GM corpse bypassed disabled stock NPC Find");
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==0,"server Find admitted a corpse");
     actor.is_corpse=0;actor.in_group=0;
     r.hub.begin_zone();
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0&&r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==0,
@@ -358,7 +362,8 @@ void map_lifecycle_and_find_exclusion() {
     r.hub.game_state(GAMESTATE_INGAME);
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"finishing zoning did not restore the selected peer policy");
     r.player_available=false;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"failed player observation failed open");
+    check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0&&r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==0,
+          "failed player observation failed open");
     r.player_available=true;r.spawn_available=false;
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==0,"failed own-spawn observation failed open");
     r.spawn_available=true;r.player.in_zone=0;
@@ -420,8 +425,6 @@ void map_gm_category_choices() {
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==1,"GM player Find was disabled by a marker category");
     r.call("set","map_players",1);
     check(r.hub.map_visible(&actor,HAILSTONE_MAP_MARKER)==1,"enabled GM player marker required tracking");
-    actor.is_npc=1;
-    check(r.hub.map_visible(&actor,HAILSTONE_MAP_FIND)==0,"GM filter controls re-enabled stock NPC Find");
 }
 void map_revision_and_settings_lifetime() {
     Rig r;
@@ -479,17 +482,23 @@ void map_retained_control_lifetime() {
 }
 void map_policy_ownership() {
     Rig r;
-    constexpr auto flags=HAILSTONE_MAP_POLICY_CUSTOM_SPAWNS|HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS|
-                         HAILSTONE_MAP_POLICY_DISABLE_NPC_FIND;
+    constexpr auto flags=HAILSTONE_MAP_POLICY_CUSTOM_SPAWNS|HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS;
+    constexpr auto legacy_size=offsetof(HailstoneMapPolicy,npc_find_mode);
     HailstoneMapPolicy policy{};policy.size=sizeof(policy);
-    check(r.hub.map_policy(&policy)==1&&policy.flags==flags&&policy.name[sizeof(policy.name)-1]==0&&
-          std::string(policy.name)=="Bastion","selected Bastion did not own custom markers, stock controls and NPC Find");
+    check(r.hub.map_policy(&policy)==1&&policy.size==sizeof(policy)&&policy.flags==flags&&policy.name[sizeof(policy.name)-1]==0&&
+          policy.npc_find_mode==HAILSTONE_NPC_FIND_SERVER_ONLY&&std::string(policy.name)=="Bastion",
+          "selected Bastion did not own custom markers and allow server Find");
+    policy={};policy.size=legacy_size;policy.npc_find_mode=0x12345678u;
+    check(r.hub.map_policy(&policy)==1&&policy.size==legacy_size&&
+          policy.flags==(flags|HAILSTONE_MAP_POLICY_DISABLE_NPC_FIND)&&policy.npc_find_mode==0x12345678u,
+          "legacy host lost its map restrictions or the reply exceeded its buffer");
     r.hub.begin_zone();r.player_available=false;
     policy={};policy.size=sizeof(policy);
-    check(r.hub.map_policy(&policy)==1&&policy.flags==flags&&std::string(policy.name)=="Bastion",
+    check(r.hub.map_policy(&policy)==1&&policy.flags==flags&&
+          policy.npc_find_mode==HAILSTONE_NPC_FIND_SERVER_ONLY&&std::string(policy.name)=="Bastion",
           "zoning or a missing player observation released Bastion map ownership");
     check(r.hub.map_policy(nullptr)==0,"null map policy output was accepted");
-    policy.size=sizeof(policy)-1;policy.flags=0x12345678u;
+    policy.size=legacy_size-1;policy.flags=0x12345678u;
     check(r.hub.map_policy(&policy)==0&&policy.flags==0x12345678u,"undersized map policy output was changed");
     r.hub.peer(false);policy={};policy.size=sizeof(policy);policy.flags=0x12345678u;
     check(r.hub.map_policy(&policy)==0&&policy.flags==0x12345678u,
@@ -530,4 +539,4 @@ void visibility_work() {
     r.call("state");check(r.player_reads>0&&r.directory_reads>0,"visible hub did not obtain current full state");
     r.hub.begin_zone();check(r.call("visibility").numbers.at("active")==0,"zoning retained visible hub admission");
 }
-int main() { try { visibility_work(); maps(); map_tracking_policy(); map_filters_and_social_visibility(); map_raid_cache_scaling(); map_raid_cache_lifetime(); map_raid_cache_failures(); map_raid_cache_reentrancy(); map_lifecycle_and_find_exclusion(); map_policy_ownership(); map_group_filter_and_find(); map_gm_category_choices(); map_revision_and_settings_lifetime(); map_retained_control_lifetime(); sales(); std::cout<<checks<<" Citadel checks passed\n"; return 0; } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; } }
+int main() { try { visibility_work(); maps(); map_tracking_policy(); map_filters_and_social_visibility(); map_raid_cache_scaling(); map_raid_cache_lifetime(); map_raid_cache_failures(); map_raid_cache_reentrancy(); map_lifecycle_and_server_find(); map_policy_ownership(); map_group_filter_and_find(); map_gm_category_choices(); map_revision_and_settings_lifetime(); map_retained_control_lifetime(); sales(); std::cout<<checks<<" Citadel checks passed\n"; return 0; } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; } }

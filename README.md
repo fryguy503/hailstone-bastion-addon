@@ -17,7 +17,7 @@ Older compatible clients retain the other tools and report unsupported new servi
 | Citadel song twisting | Song-gem queues, one-shot interruptions, hold, resume, timing controls and the `Twist` data object. Quiet messages and non-bard use are character settings; native casting permissions still apply. |
 | Fast camp | `/fastcamp` requests a camp and accepts Bastion's eligible-zone offer. The server remains authoritative; ordinary camping retains its countdown when no offer arrives. |
 | Right-click merchant selling | **Off by default.** A deliberate inventory right-click while shopping sells the whole stack using Bastion's protocol. Occupied cursor, bags, unrelated slots and invalid merchant contexts retain the host's guarded behavior. |
-| Maps | **Map controls → Bastion filters** selects group members, raid names, NPCs, merchants, other players and corpses. Tracking permissions and Citadel's reduced planar NPC/corpse range still apply. Stock NPC overlays and NPC Find stay disabled. Self, terrain, labels, pins and other-server stock preferences are preserved. Ordinary unrelated players remain unnamed. |
+| Maps | **Map controls → Bastion filters** selects group members, raid names, NPCs, merchants, other players and corpses. Tracking permissions and Citadel's reduced planar NPC/corpse range still apply. Find lists NPCs marked findable by Bastion and requests the server's path. Self, terrain, labels, pins and other-server stock preferences are preserved. Ordinary unrelated players remain unnamed. |
 | Raid bars | Native Lua group cards or class grid, HP/class filters, class colors/roles, known resource bars, pets, targeting, explicit management, Delegate Raid Manager List/Grant/Revoke controls, edit/resize, scrolling and per-character settings. |
 | Faction standings | FAC1 categories, global search, numeric values/progress, retained selection, inspection and TSV export, including `/outputfile faction`. |
 | DZ manager | Saved expeditions, eligibility/expiry, explicit rejoin, and preserved delegate/server command paths. Rejoin does not teleport or renew an instance. |
@@ -131,10 +131,9 @@ deployed handler still needs confirmation.
 Map filtering is client presentation policy. Other scripts can still read spawn data that the
 server has sent; this is not a server-side anti-cheat boundary. This port intentionally closes
 the legacy selected-target/nontracker corpse reveal exceptions to keep NPC/corpse map permissions
-consistent across the map and minimap. Stock NPC Find is unavailable on Bastion; its list,
-target/path/walk actions and quest discovery cannot bypass the addon's marker policy.
-An active NPC Find walk stops on ownership or eligibility changes. Ordinary movement and
-player/group navigation remain available. Other servers recover the saved stock map behavior.
+consistent across the map and minimap. On compatible Hailstone clients, Find uses the NPC list
+announced by the zone server. Those entries work regardless of Tracking skill, range or marker filters.
+Choosing Path requests Bastion's route. Map markers continue to use the six Bastion filters.
 
 Live encounters, slopes/lifts, 72-member raids, roster churn, pet equipment, merchant inventory
 updates, home-city grants, Firefell transfers and physical controller use remain acceptance work.

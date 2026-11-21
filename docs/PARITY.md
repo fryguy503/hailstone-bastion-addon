@@ -9,14 +9,13 @@ integration was reference material; the standalone addon does not link it or req
 - **Tracking maps:** the earlier port omitted Citadel's 0.2 multiplier, used 3D rather than planar
   distance, missed merchant classes 67/68/70, and named unrelated players. This port corrects these
   differences and claims exclusive extension actor markers through a generic host policy.
-  Bastion disables the stock NPC map/minimap overlays and NPC Find, including selected/hovered
-  marks, cached lists, quest discovery and target/path/walk actions. Ownership remains active
-  during zoning. Both an existing Find trail and a Find-owned NPC walk stop when blocked or
-  ineligible; manual movement and player navigation remain available. Terrain, static labels,
-  personal pins and saved stock preferences are preserved, and other servers regain stock behavior.
+  Bastion keeps exclusive control of the NPC map and minimap overlays while Find uses the zone
+  server's list of findable NPCs on compatible Hailstone clients. Choosing Path requests the
+  server's route. Ownership remains active during zoning. Find actions check current eligibility,
+  and the displayed path clears when the NPC becomes ineligible.
   Trained ranger (4), druid (6) and bard (8) characters use skill 53 values 1–252, memorized tracking techniques,
-  and `floor((200 + skill*20 + technique)*0.2)`. Received GM state retains its Bastion marker
-  exceptions but does not re-enable stock NPC Find. The map-local Filters control mirrors the DLL's
+  and `floor((200 + skill*20 + technique)*0.2)`. Received GM state grants the Bastion marker
+  exceptions. The map-local Filters control mirrors the DLL's
   independent NPC, merchant, other-player, corpse and raid-name preferences. Group members are on
   by default, with a new explicit display-only opt-out; self and group Find/navigation remain available.
   Explicit category switches also hide GM markers, so the controls remain meaningful while GM

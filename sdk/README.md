@@ -2,10 +2,10 @@
 
 These MIT-licensed headers are based on upstream Hailstone commit
 `6446875a5e01037aac565776d9e0f8f6f97093da`. `hailstone_plugin.h` also includes the
-companion client's later class-name tail slot and generic popup/camping services.
+companion client's later class-name tail slot, generic popup/camping services, and server-only Find policy.
 
 `hailstone_plugin.h` SHA256
-`082b168e699eba611095ebc277873d1d7aa21dec1e48a94e177e40058bbc3582` (LF line endings).
+`a22d2c9a79f8da99ca98799fb8e632a794adea7e085ce25263bd93b467e24827` (LF line endings).
 
 The addon uses `HAILSTONE_PLUGIN` to export the public ABI 3 entry points. It uses
 `HAILSTONE_HOST_HAS` before calling optional host services. Raid observations come from
@@ -13,6 +13,8 @@ The addon uses `HAILSTONE_PLUGIN` to export the public ABI 3 entry points. It us
 
 Map ownership requires the extended map-policy record and a nonzero host-issued world context.
 The addon checks for a usable context before activating on a selected Bastion world.
+The provider uses the optional 96-byte map-policy record for server-only NPC Find. It reports
+the original restrictions when the host requests the legacy 88-byte record.
 
 Preview 6 checks the optional `get_large_dialog` and `answer_large_dialog` services before
 offering fast camp. These use current popup/camp tokens; `HAILSTONE_PLAYER_CAMPING` reports

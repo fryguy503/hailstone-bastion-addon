@@ -53,8 +53,7 @@ int main() { try {
     check(hooks && hooks->map_visible && hooks->map_policy && hooks->merchant_right_click,"missing extension hooks");
     check(hooks->command_line("/twist 1 2")==nullptr && hooks->command_line("/fastcamp")==nullptr,
           "server-specific song or camp commands activated before announcement");
-    constexpr auto policy_flags=HAILSTONE_MAP_POLICY_CUSTOM_SPAWNS|HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS|
-                                HAILSTONE_MAP_POLICY_DISABLE_NPC_FIND;
+    constexpr auto policy_flags=HAILSTONE_MAP_POLICY_CUSTOM_SPAWNS|HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS;
     HailstoneMapPolicy policy{};policy.size=sizeof(policy);
     check(hooks->map_policy(&policy)==0&&policy.flags==0,"map ownership began before a Bastion announcement");
     HailstoneSpawn s{}; s.size=sizeof(s); s.id=9; s.incarnation=9; s.is_npc=1;
@@ -65,7 +64,8 @@ int main() { try {
     check(h.functions.contains("twist") && h.functions.contains("fast_camp"),"new module callbacks missing");
     for(const auto* line:{"/twist help","/sing 1","/stoptwist","/fastcamp","/citadel twist help","/bastion stoptwist","/cit fastcamp cancel"})
         check(hooks->command_line(line)!=nullptr,"song/camp command alias escaped addon routing");
-    check(hooks->map_policy(&policy)==1&&policy.flags==policy_flags&&std::string(policy.name)=="Bastion",
+    check(hooks->map_policy(&policy)==1&&policy.flags==policy_flags&&
+          policy.npc_find_mode==HAILSTONE_NPC_FIND_SERVER_ONLY&&std::string(policy.name)=="Bastion",
           "selected peer did not publish its authoritative map presentation policy");
     OnBeginZone();policy={};policy.size=sizeof(policy);
     check(hooks->map_policy(&policy)==1&&policy.flags==policy_flags,"zoning released the selected peer's stock-map restrictions");
@@ -122,15 +122,20 @@ int main() { try {
     }
     static_assert(offsetof(HailstoneMapPolicy,revision)==72);
     static_assert(offsetof(HailstoneMapPolicy,context)==80);
-    static_assert(sizeof(HailstoneMapPolicy)==88);
+    static_assert(offsetof(HailstoneMapPolicy,npc_find_mode)==88);
+    static_assert(sizeof(HailstoneMapPolicy)==96);
     struct PolicyReaderCase {
         const char* name;
         decltype(h.api.get_map_policy) reader;
         bool accepted;
     };
     const PolicyReaderCase reader_cases[]={
-        {"full 88-byte map policy",policy_reader,true},
-        {"full 88-byte result without host context",[](void*,HailstoneMapPolicy* out) -> int {
+        {"full 96-byte map policy",policy_reader,true},
+        {"legacy 88-byte policy with host context",[](void*,HailstoneMapPolicy* out) -> int {
+            if (!legacy_map_policy_read(out,offsetof(HailstoneMapPolicy,npc_find_mode))) return 0;
+            out->context=91;return 1;
+        },true},
+        {"full result without host context",[](void*,HailstoneMapPolicy* out) -> int {
             *out={};out->size=sizeof(*out);out->revision=37;return 1;
         },false},
         {"original 72-byte prefix",[](void*,HailstoneMapPolicy* out) -> int {
@@ -167,7 +172,8 @@ int main() { try {
               because("map activation ignored the negotiated result extent").c_str());
         policy={};policy.size=sizeof(policy);
         const auto owns_map=hooks->map_policy(&policy);
-        check(test.accepted ? owns_map==1&&policy.flags==policy_flags&&std::string(policy.name)=="Bastion" :
+        check(test.accepted ? owns_map==1&&policy.flags==policy_flags&&
+                              policy.npc_find_mode==HAILSTONE_NPC_FIND_SERVER_ONLY&&std::string(policy.name)=="Bastion" :
                               owns_map==0&&policy.flags==0,
               because("unsupported map reader left presentation ownership active").c_str());
         check((hooks->command_line("/bastion settings")!=nullptr)==test.accepted,

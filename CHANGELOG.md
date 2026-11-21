@@ -1,5 +1,9 @@
 # Changes
 
+## Unreleased
+
+- Restore Find and server paths for NPCs that Bastion marks findable on compatible Hailstone clients.
+
 ## 0.1.0-preview.6
 
 - Add Citadel song twisting: gem queues, once/hold/resume controls, historical timing, quiet settings and the `Twist` data object.
