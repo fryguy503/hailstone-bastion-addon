@@ -1,11 +1,11 @@
 # Public Hailstone SDK snapshot
 
-These MIT-licensed headers are based on upstream Hailstone commit
-`6446875a5e01037aac565776d9e0f8f6f97093da`. `hailstone_plugin.h` also includes the
-companion client's later class-name tail slot, generic popup/camping services, and server-only Find policy.
+These MIT-licensed headers are based on Hailstone's public SDK. Preview 7 refreshes
+`hailstone_plugin.h` and its nameplate and UI contribution dependencies from client revision
+`eca9cf1de5cf4cee9e50673281c4c93b034e499a`, with the optional actor-guide field.
 
 `hailstone_plugin.h` SHA256
-`a22d2c9a79f8da99ca98799fb8e632a794adea7e085ce25263bd93b467e24827` (LF line endings).
+`2094d6304abd919551550a5b50c376bfa50c4b12871a8838819eda175c685d96` (LF line endings).
 
 The addon uses `HAILSTONE_PLUGIN` to export the public ABI 3 entry points. It uses
 `HAILSTONE_HOST_HAS` before calling optional host services. Raid observations come from
@@ -13,16 +13,13 @@ The addon uses `HAILSTONE_PLUGIN` to export the public ABI 3 entry points. It us
 
 Map ownership requires the extended map-policy record and a nonzero host-issued world context.
 The addon checks for a usable context before activating on a selected Bastion world.
-The provider uses the optional 96-byte map-policy record for server-only NPC Find. It reports
-the original restrictions when the host requests the legacy 88-byte record.
+The provider uses the 96-byte map-policy record for server-only NPC Find. It requires the 104-byte
+record to enable visual guides for the current target and selected Bazaar traders. The legacy
+88-byte record keeps NPC Find disabled and uses Bastion's marker policy.
 
-Preview 6 checks the optional `get_large_dialog` and `answer_large_dialog` services before
-offering fast camp. These use current popup/camp tokens; `HAILSTONE_PLAYER_CAMPING` reports
+Fast camp checks the optional `get_large_dialog` and `answer_large_dialog` services in the current
+host-table layout. These use current popup/camp tokens. `HAILSTONE_PLAYER_CAMPING` reports
 native camping without changing the existing player-record layout. The scheduler reads
 `Spell.DurationFormula` and `Spell.DurationCap` for ordinary multi-song rotations; when those
 raw members are absent, it pauses with an update message rather than guessing long-song timing.
-Single-gem, hold and one-shot controls can still run without those members. Existing `Spell.Duration`
-and all previously released host-table offsets remain unchanged.
-
-The companion client source validated with Preview 6 is
-`074401a11bde6d6c06ea92aecf11492bbf39c438`.
+Single-gem, hold and one-shot controls can run on clients that lack those members.

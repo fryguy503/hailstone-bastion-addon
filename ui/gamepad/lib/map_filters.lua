@@ -23,7 +23,7 @@ function M.draw_settings(plugin,state,style,apply)
   rows(plugin,state,members,true,apply)
   rows(plugin,state,tracked,state.can_track==true,apply)
   style.note(state.can_track and "Tracking range applies to NPCs and corpses."or"Trained Tracking required.","muted")
-  style.tooltip("Choose Bastion markers. Stock NPC overlays and NPC Find remain disabled. Your own marker stays visible.")
+  style.tooltip("Choose Bastion markers. Stock NPC overlays are hidden. Compatible clients can Find NPCs advertised by the Bastion zone server. Older clients keep NPC Find disabled. Your own marker stays visible.")
 end
 local function services()
   local api=type(hs)=="table"and hs.UI or nil

@@ -136,14 +136,17 @@ float CitadelHub::tracking_range() const {
 }
 int CitadelHub::map_policy(HailstoneMapPolicy* out) const {
     constexpr auto legacy_size=offsetof(HailstoneMapPolicy,npc_find_mode);
+    constexpr auto server_find_size=offsetof(HailstoneMapPolicy,actor_guides);
     if (!selected_ || !out || out->size<legacy_size) return 0;
-    const bool server_find=out->size>=sizeof(*out);
+    const bool server_find=out->size>=server_find_size;
+    const bool actor_guides=out->size>=sizeof(*out);
     HailstoneMapPolicy policy{};
-    policy.size=static_cast<std::uint32_t>(server_find ? sizeof(policy) : legacy_size);
+    policy.size=static_cast<std::uint32_t>(actor_guides ? sizeof(policy) : server_find ? server_find_size : legacy_size);
     policy.revision=map_revision_;
     policy.flags=HAILSTONE_MAP_POLICY_CUSTOM_SPAWNS|HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS;
     if (server_find) policy.npc_find_mode=HAILSTONE_NPC_FIND_SERVER_ONLY;
     else policy.flags|=HAILSTONE_MAP_POLICY_DISABLE_NPC_FIND;
+    if (actor_guides) policy.actor_guides=HAILSTONE_MAP_ACTOR_GUIDES;
     std::memcpy(policy.name,"Bastion",8);
     std::memcpy(out,&policy,policy.size);
     return 1;

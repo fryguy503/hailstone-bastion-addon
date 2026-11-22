@@ -81,8 +81,19 @@ int main() { try {
     check(hooks->command_line(oversized.c_str())==nullptr && hooks->command_line("/hcl\n/hcn")==nullptr,
           "corpse aliases rewrote oversized or multiline input");
     check(hooks->map_policy(&policy)==1&&policy.flags==policy_flags&&
-          policy.npc_find_mode==HAILSTONE_NPC_FIND_SERVER_ONLY&&std::string(policy.name)=="Bastion",
+          policy.npc_find_mode==HAILSTONE_NPC_FIND_SERVER_ONLY&&policy.actor_guides==HAILSTONE_MAP_ACTOR_GUIDES&&
+          policy.size==sizeof(policy)&&std::string(policy.name)=="Bastion",
           "selected peer did not publish its authoritative map presentation policy");
+    policy.size=offsetof(HailstoneMapPolicy,actor_guides);
+    policy.actor_guides=37;
+    check(hooks->map_policy(&policy)==1&&policy.size==offsetof(HailstoneMapPolicy,actor_guides)&&
+          policy.flags==policy_flags&&policy.npc_find_mode==HAILSTONE_NPC_FIND_SERVER_ONLY&&policy.actor_guides==37,
+          "96-byte hosts lost server Find or received an out-of-bounds actor-guide field");
+    policy.size=offsetof(HailstoneMapPolicy,npc_find_mode);
+    policy.npc_find_mode=37;
+    check(hooks->map_policy(&policy)==1&&policy.size==offsetof(HailstoneMapPolicy,npc_find_mode)&&
+          policy.flags==(policy_flags|HAILSTONE_MAP_POLICY_DISABLE_NPC_FIND)&&policy.npc_find_mode==37&&policy.actor_guides==37,
+          "88-byte hosts lost their NPC Find fallback or received out-of-bounds fields");
     OnBeginZone();policy={};policy.size=sizeof(policy);
     check(hooks->map_policy(&policy)==1&&policy.flags==policy_flags,"zoning released the selected peer's stock-map restrictions");
     check(hooks->map_visible(&s,HAILSTONE_MAP_MARKER)==0&&hooks->map_visible(&s,HAILSTONE_MAP_FIND)==0,
@@ -140,14 +151,19 @@ int main() { try {
     static_assert(offsetof(HailstoneMapPolicy,revision)==72);
     static_assert(offsetof(HailstoneMapPolicy,context)==80);
     static_assert(offsetof(HailstoneMapPolicy,npc_find_mode)==88);
-    static_assert(sizeof(HailstoneMapPolicy)==96);
+    static_assert(offsetof(HailstoneMapPolicy,actor_guides)==96);
+    static_assert(sizeof(HailstoneMapPolicy)==104);
     struct PolicyReaderCase {
         const char* name;
         decltype(h.api.get_map_policy) reader;
         bool accepted;
     };
     const PolicyReaderCase reader_cases[]={
-        {"full 96-byte map policy",policy_reader,true},
+        {"full 104-byte map policy",policy_reader,true},
+        {"legacy 96-byte policy with host context",[](void*,HailstoneMapPolicy* out) -> int {
+            if (!legacy_map_policy_read(out,offsetof(HailstoneMapPolicy,actor_guides))) return 0;
+            out->context=91;return 1;
+        },true},
         {"legacy 88-byte policy with host context",[](void*,HailstoneMapPolicy* out) -> int {
             if (!legacy_map_policy_read(out,offsetof(HailstoneMapPolicy,npc_find_mode))) return 0;
             out->context=91;return 1;
