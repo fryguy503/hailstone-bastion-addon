@@ -16,6 +16,7 @@ Older compatible clients retain the other tools and report unsupported new servi
 | Enhanced Citadel follow | Manual start/stop, outside-group player following, configurable distance, movement cancellation, smooth steering/pitch, optional instant mount response. Direct follow does not route around obstacles. |
 | Citadel song twisting | Song-gem queues, one-shot interruptions, hold, resume, timing controls and the `Twist` data object. Quiet messages and non-bard use are character settings; native casting permissions still apply. |
 | Fast camp | `/fastcamp` requests a camp and accepts Bastion's eligible-zone offer. The server remains authoritative; ordinary camping retains its countdown when no offer arrives. |
+| Corpse visibility | **Settings → Corpses** or `/hidecorpse` uses Hailstone's character preference. The updated client supports **Always hide**, which also hides your own corpse and corpses that appear later. |
 | Right-click merchant selling | **Off by default.** A deliberate inventory right-click while shopping sells the whole stack using Bastion's protocol. Occupied cursor, bags, unrelated slots and invalid merchant contexts retain the host's guarded behavior. |
 | Maps | **Map controls → Bastion filters** selects group members, raid names, NPCs, merchants, other players and corpses. Tracking permissions and Citadel's reduced planar NPC/corpse range still apply. Find lists NPCs marked findable by Bastion and requests the server's path. Self, terrain, labels, pins and other-server stock preferences are preserved. Ordinary unrelated players remain unnamed. |
 | Raid bars | Native Lua group cards or class grid, HP/class filters, class colors/roles, known resource bars, pets, targeting, explicit management, Delegate Raid Manager List/Grant/Revoke controls, edit/resize, scrolling and per-character settings. |
@@ -56,6 +57,9 @@ measured costs and remaining live acceptance limits.
 /stoptwist
 /twist start
 /fastcamp
+/hcl
+/hca
+/hcn
 /rightclicksell on
 /faction [partial name]
 /outputfile faction [filename]
@@ -88,6 +92,11 @@ an explicit resume. Citadel's current DLL disables item/AA twisting, so this por
 Fast camp is explicit through `/fastcamp`, or optional through **Settings → Camping**.
 `/fastcamp server` and `/fastcamp desktop` preserve native camp destinations. `/fastcamp cancel`
 leaves the normal countdown running. The server decides whether fast camp is available.
+
+`/hidecorpse` accepts `none`, `off`, `all`, `allbutgroup`, `npc`, `looted` and `always`.
+`/hc`, `/hideco` and `/hidec` take the same modes. `/hcl` selects `looted`, `/hca` selects `all`,
+and `/hcn` selects `none`. The settings selector, saved preference and `always` require the
+matching Hailstone update.
 
 Start the addon before world login to receive the server announcement and any early protocol messages.
 If it first loads at zone-in or is reloaded in a zone, it can also activate for Bastion - Production

@@ -8,6 +8,7 @@ for _,pack in ipairs({"modern","gamepad"})do
   local integrityCalls,fullReads,visibilityReads=0,0,0
   local twistReads,twistCalls=0,{}
   local campReads,campCalls=0,{}
+  local corpseReads,corpseMode,corpseLabel,corpseCalls=0,3,nil,{}
   local checkboxValues={}
   local camp={active=true,supported=true,enabled=false,armed=false,message="",error=""}
   local twist={active=true,running=false,queue="1 2 3",current=0,next=1,hold=0,settings={quiet=false,allow_nonbard=false},message="",error=""}
@@ -28,32 +29,45 @@ for _,pack in ipairs({"modern","gamepad"})do
     integrity=function(op)check(op=="state","integrity UI attempted an active operation");integrityCalls=integrityCalls+1;return integrity end,
     twist=function(op,...)if op=="state"then twistReads=twistReads+1 else twistCalls[#twistCalls+1]={op,...}end;return twist end,
     fast_camp=function(op,...)if op=="state"then campReads=campReads+1 else campCalls[#campCalls+1]={op,...}end;return camp end}
-  BASTION_UI={};eq={Plugin=function()return p end}
+  BASTION_UI={};eq={Plugin=function()return p end,
+    Option=function(key)check(key=="hide_corpses","corpse setting queried an unrelated option");corpseReads=corpseReads+1;return corpseMode end,
+    SetOption=function(key,value)corpseCalls[#corpseCalls+1]={key,value}end}
   ui={window=function(_,fn)draw=fn end,Begin=function()return true,true end,End=function()end,
     BeginChild=function()return true end,EndChild=function()end,SameLine=function()end,
     TextWrapped=function(v)texts[#texts+1]=v end,Button=function(label)return clicks[label]end,
     InputText=function(label,value)if changes[label]~=nil then return changes[label]end;return value end,
     Checkbox=function(label,value)checkboxValues[label]=value;if changes[label]~=nil then return changes[label],true end;return value,false end,
-    BeginCombo=function()return false end,EndCombo=function()end,
+    BeginCombo=function(label,preview)
+      if label=="Hide corpses"then corpseLabel=preview;return clicks[label]end
+      return false
+    end,EndCombo=function()end,
     Selectable=function(label)
       if label:find("##command:",1,true)then options=options+1 end
-      return pick and label:find(pick,1,true)~=nil
+      return clicks[label] or (pick and label:find(pick,1,true)~=nil)
     end,
     SetClipboardText=function(value)clipboard=value end}
   local h=setup(root,pack,ui,eq,check)
   dofile(root.."/ui/"..pack.."/citadel.lua")
-  local function frame()h.advance();options=0;texts={};draw();h.balanced();clicks={};changes={};pick=nil end
+  local function frame()h.advance();options=0;texts={};corpseLabel=nil;draw();h.balanced();clicks={};changes={};pick=nil end
   local function panel(name)s.open_revision=tostring(tonumber(s.open_revision)+1);s.panel=name;frame()end
   for _=1,120 do frame()end
   check(fullReads==0 and visibilityReads==120 and #calls==0 and #sendCalls==0 and catalogCalls==0,"hidden hub requested full state or performed active work")
   check(twistReads==0 and #twistCalls==0,"hidden hub polled or started song twisting")
   check(campReads==0 and #campCalls==0,"hidden hub polled or requested fast camp")
+  check(corpseReads==0 and #corpseCalls==0,"hidden hub read or changed corpse visibility")
   s.shown=true;frame();check(table.concat(texts," "):find("9 tools",1,true),"module inventory omitted")
   clicks["Encounter telegraphs"]=true;frame();check(calls[#calls][1]=="open"and calls[#calls][2]=="telegraphs","telegraph launcher missing")
   for _,name in ipairs({"telegraphs","gear_score","raidbars","citadel_follow"})do panel(name);check(BASTION_UI[name],"panel revision did not open module")end
   calls={};panel("settings")
   check(twistReads==1 and #twistCalls==0,"opening settings changed song twisting")
   check(campReads==1 and #campCalls==0,"opening settings requested fast camp")
+  check(corpseReads==1 and corpseLabel=="Looted corpses" and #corpseCalls==0,"opening settings failed to show the saved corpse mode passively")
+  clicks["Hide corpses"]=true;clicks["Always hide"]=true;frame()
+  check(#corpseCalls==1 and corpseCalls[1][1]=="hide_corpses" and corpseCalls[1][2]==5,"corpse selector failed to set the shared Always mode")
+  corpseMode=5;clicks["Hide corpses"]=true;clicks["Always hide"]=true;frame()
+  check(corpseLabel=="Always hide" and #corpseCalls==1,"corpse selector rewrote the selected mode")
+  corpseMode=nil;frame()
+  check(corpseLabel==nil and #corpseCalls==1,"host without corpse settings drew an active selector")
   check(integrityCalls>0 and table.concat(texts," "):find("Waiting for server challenge",1,true),"passive integrity status missing from settings")
   integrity.measured=true;integrity.status="Report queued";frame();check(table.concat(texts," "):find("Measured; waiting to send",1,true),"measurement claimed a successful send")
   integrity.sent=true;integrity.status="Report sent";frame();local integrityText=table.concat(texts," ")
@@ -150,7 +164,7 @@ for _,pack in ipairs({"modern","gamepad"})do
   clicks["Open command tool"]=true;frame();check(calls[#calls][1]=="open"and calls[#calls][2]=="petinventory"and #sendCalls==1,"local tool sent server command")
   changes["Search commands and help"]="";frame();check(options==16,"full list exceeded page budget")
   for _=1,14 do clicks["Next commands"]=true;frame();frame();check(options<=16,"command page exceeded bound")end
-  check(options==1,"last command page omitted records")
+  check(options==2,"last command page omitted records")
   check(catalogCalls==1,"drawing repeatedly fetched unchanged catalog")
   calls={};panel("firefell");check(table.concat(texts," "):find("Firefell: Trial",1,true)and #calls==0,"Firefell context not passive")
   clicks["Refresh Firefell context"]=true;frame();check(calls[#calls][1]=="firefell refresh","manual Firefell refresh missing")

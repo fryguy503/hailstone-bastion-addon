@@ -42,6 +42,7 @@ bastion::integrity::Adapter integrity;
 bastion::twist::Adapter twist;
 bastion::fast_camp::Adapter fast_camp;
 std::string description;
+std::string corpse_command;
 
 template<class F> void guarded(F&& action) noexcept {
     bastion::services::guarded_ui(host,[&] { action(); return 1; });
@@ -122,10 +123,21 @@ bool open(std::string_view feature) {
 }
 const char* command_impl(const char* line) {
     if(!selected || !line) return nullptr;
-    std::size_t length=0; while(length<=1024 && line[length]) ++length;
-    if(length>1024 || std::string_view(line,length).find_first_of("\r\n")!=std::string_view::npos) return nullptr;
+    constexpr std::size_t max_line=1024;
+    std::size_t length=0; while(length<=max_line && line[length]) ++length;
+    if(length>max_line || std::string_view(line,length).find_first_of("\r\n")!=std::string_view::npos) return nullptr;
     std::string_view args(line,length);
     const auto root=lower(word(args));
+    if(root=="/hcl") return "/hidecorpses looted";
+    if(root=="/hca") return "/hidecorpses all";
+    if(root=="/hcn") return "/hidecorpses none";
+    if(root=="/hc" || root=="/hideco" || root=="/hidec") {
+        constexpr std::string_view native="/hidecorpses";
+        if(args.size()>max_line-native.size()-1) return nullptr;
+        corpse_command=native;
+        if(!args.empty()) { corpse_command+=' '; corpse_command+=args; }
+        return corpse_command.c_str();
+    }
     twist.observe_command(line);
     fast_camp.observe_command(line);
     auto panel_args=args;

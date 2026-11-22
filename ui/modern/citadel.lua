@@ -53,6 +53,24 @@ local function toggle(p,state,key,label,enabled)
   ui.EndDisabled()
   if changed and enabled~=false then p.citadel("set",key,value and 1 or 0)end
 end
+local corpseModes={"Show corpses","All corpses","All but group","Looted corpses","NPC corpses","Always hide"}
+local function corpse_visibility()
+  local settings=hs and hs.UI and hs.UI.settings
+  if not settings or not settings.Option or not settings.SetOption then return end
+  local mode=settings.Option("hide_corpses")
+  local label=type(mode)=="number" and corpseModes[mode+1]
+  if not label then return end
+  C.section("Corpses")
+  if ui.BeginCombo("Hide corpses",label)then
+    for index,choice in ipairs(corpseModes)do
+      local selected=index==mode+1
+      if ui.Selectable(choice,selected) and not selected then settings.SetOption("hide_corpses",index-1)end
+    end
+    ui.EndCombo()
+  end
+  C.tooltip("Always hide includes your own corpse and corpses that appear later.")
+  ui.Dummy(0,6*R.s)
+end
 local function firefell(p)
   local f=p.firefell and p.firefell("state")
   if not f then return end
@@ -75,6 +93,7 @@ local function settings(p,s)
     toggle(p,s,"right_click_sell","Right-click selling")
     C.note("Off by default. Sells the whole stack while shopping.","muted")
     ui.Dummy(0,6*R.s)
+    corpse_visibility()
     Twist.draw(p,R)
     ui.Dummy(0,6*R.s)
     C.section("Tool settings")

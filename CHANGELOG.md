@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Restore Find and server paths for NPCs that Bastion marks findable on compatible Hailstone clients.
+- Restore Citadel's corpse shortcuts and add a corpse visibility selector in both packs using Hailstone's saved mode.
 
 ## 0.1.0-preview.6
 

@@ -53,6 +53,7 @@ int main() { try {
     check(hooks && hooks->map_visible && hooks->map_policy && hooks->merchant_right_click,"missing extension hooks");
     check(hooks->command_line("/twist 1 2")==nullptr && hooks->command_line("/fastcamp")==nullptr,
           "server-specific song or camp commands activated before announcement");
+    check(hooks->command_line("/hcl")==nullptr,"corpse shortcut activated before a Bastion announcement");
     constexpr auto policy_flags=HAILSTONE_MAP_POLICY_CUSTOM_SPAWNS|HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS;
     HailstoneMapPolicy policy{};policy.size=sizeof(policy);
     check(hooks->map_policy(&policy)==0&&policy.flags==0,"map ownership began before a Bastion announcement");
@@ -64,6 +65,21 @@ int main() { try {
     check(h.functions.contains("twist") && h.functions.contains("fast_camp"),"new module callbacks missing");
     for(const auto* line:{"/twist help","/sing 1","/stoptwist","/fastcamp","/citadel twist help","/bastion stoptwist","/cit fastcamp cancel"})
         check(hooks->command_line(line)!=nullptr,"song/camp command alias escaped addon routing");
+    const auto corpse_alias=[&](const char* line,std::string_view expected) {
+        const auto* replacement=hooks->command_line(line);
+        check(replacement && replacement==expected,"corpse alias did not route to the native command");
+    };
+    corpse_alias(" /HCL\t","/hidecorpses looted");
+    corpse_alias("/hca","/hidecorpses all");
+    corpse_alias("/hcn","/hidecorpses none");
+    corpse_alias("/hc","/hidecorpses");
+    corpse_alias("/HideCo\tALWAYS","/hidecorpses ALWAYS");
+    corpse_alias("/hidec allbutgroup","/hidecorpses allbutgroup");
+    check(hooks->command_line("/hidecorpses npc")==nullptr && hooks->command_line("/hclong")==nullptr,
+          "corpse aliases intercepted a native or unrelated command");
+    const auto oversized=std::string("/hc ")+std::string(1012,'x');
+    check(hooks->command_line(oversized.c_str())==nullptr && hooks->command_line("/hcl\n/hcn")==nullptr,
+          "corpse aliases rewrote oversized or multiline input");
     check(hooks->map_policy(&policy)==1&&policy.flags==policy_flags&&
           policy.npc_find_mode==HAILSTONE_NPC_FIND_SERVER_ONLY&&std::string(policy.name)=="Bastion",
           "selected peer did not publish its authoritative map presentation policy");
@@ -105,6 +121,7 @@ int main() { try {
     OnPacket(HAILSTONE_STREAM_WORLD,HAILSTONE_IN,&p); check(hooks->map_visible(&s,0)==-1,"world switch leaked policy");
     check(hooks->command_line("/twist 1 2")==nullptr && hooks->command_line("/fastcamp")==nullptr,
           "server-specific song or camp command survived a world switch");
+    check(hooks->command_line("/hcl")==nullptr,"corpse shortcut survived a world switch");
     policy={};policy.size=sizeof(policy);
     check(hooks->map_policy(&policy)==0&&policy.flags==0,"non-Bastion world retained stock-map restrictions");
     ShutdownPlugin(); check(h.functions.empty(),"unload left UI callbacks");
