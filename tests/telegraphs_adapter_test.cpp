@@ -48,6 +48,12 @@ struct Saved {
     std::vector<HailstoneWorldVertex> vertices;
 };
 struct Probe { float x, y, z; };
+struct FallbackOutput {
+    unsigned tables = 0;
+    std::string key;
+    std::map<std::string, std::string> text;
+    std::map<std::string, std::int64_t> numbers;
+};
 // Direct adapter fixture. Production plugin packet routing is covered by the
 // standalone plugin integration tests, not by this renderer host model.
 struct AdapterHarness {
@@ -87,6 +93,9 @@ struct Rig {
     std::vector<tel::Packet> sent;
     std::vector<Saved> submissions;
     std::vector<Probe> probes;
+    std::size_t anchor_queries = 0;
+    HailstoneUiFn fallback_ui = nullptr;
+    void* fallback_ui_context = nullptr;
     std::string config_path;
     std::map<std::uint32_t, HailstoneWorldAnchor> actors;
     std::function<int(float, float, float, float&)> sample = [](float, float, float probe, float& z) {
@@ -136,6 +145,7 @@ struct Rig {
         api.world_anchor = [](void* context, std::uint64_t frame, std::uint32_t zone_epoch, std::uint32_t id, HailstoneWorldAnchor* out) -> int {
             auto& r = *static_cast<Rig*>(context);
             check(frame == r.serial && zone_epoch == r.epoch && out && out->size == sizeof(*out), "Adapter anchor query lost frame/size identity");
+            ++r.anchor_queries;
             const auto found = r.actors.find(id);
             if (found == r.actors.end()) return HAILSTONE_WORLD_MISSING;
             *out = found->second; return HAILSTONE_WORLD_RESOLVED;
@@ -341,11 +351,11 @@ void lifecycle_and_runtime_capability() {
     check(r.count(tel::Action::Presented) == 0, "FrameUnavailable left issued render proofs active");
     const auto hello_count = r.count(tel::Action::Hello);
     r.now += 16; r.frame();
-    check(r.count(tel::Action::Hello) == hello_count + 1 && r.sent.back().revision == 1, "Renderer restoration did not request replacement snapshot");
-    r.ack();
+    check(r.count(tel::Action::Hello) == hello_count && r.submissions.size() == 2,
+          "Skipped draw discarded a same-zone warning or restarted negotiation");
     r.addon->begin_zone(); r.now += 16; r.frame();
     const auto before = r.sent.size();
-    check(r.count(tel::Action::Hello) == hello_count + 1, "Retired zone epoch was allowed to advertise a new scene");
+    check(r.count(tel::Action::Hello) == hello_count, "Retired zone epoch was allowed to advertise a new scene");
     ++r.epoch; r.now += 16; r.frame();
     check(r.sent.size() > before && r.sent.back().action == tel::Action::Hello, "New zone epoch could not reacquire readiness");
     r.result(old); r.finish(old.frame, 6, old.epoch); r.addon->pulse();
@@ -363,10 +373,52 @@ void lifecycle_and_runtime_capability() {
     r.addon->game_state(GAMESTATE_INGAME); r.now += 16; r.frame();
     check(r.sent.back().action == tel::Action::Hello && r.sent.back().revision == 1,
           "Same-epoch return after character-select did not request replacement snapshot");
-    r.now += 1001; const auto sent = r.sent.size(); r.addon->pulse();
-    check(r.sent.size() == sent, "Stale rendered-frame availability advertised Hello");
-    r.now += 16; r.frame();
-    check(r.sent.back().action == tel::Action::Hello, "Fresh scene could not restore runtime availability");
+}
+
+void skipped_draws_keep_current_warnings() {
+    for (unsigned client = 0; client < 3; ++client) {
+        Rig r;
+        r.connect();
+        r.incoming(circle());
+        r.now += 16;
+        r.frame();
+        const auto previous = r.submissions.back();
+        HailstoneWorldReceipt skipped{};
+        skipped.size = sizeof(skipped);
+        skipped.status = HAILSTONE_WORLD_FRAME_UNAVAILABLE;
+        skipped.epoch = r.epoch;
+        skipped.frame = previous.frame;
+        r.caps = 0;
+        r.addon->hooks()->world_frame_result(&skipped);
+        r.result(previous);
+        r.finish(previous.frame, 0);
+        r.now += 1200;
+        r.addon->pulse();
+        r.incoming(control(tel::Action::Cancel, 42, 4));
+        r.incoming(circle(43, 20, 34));
+        r.addon->hooks()->world_frame_result(&skipped);
+        check(r.count(tel::Action::Presented) == 0, "A skipped draw certified a warning");
+        r.caps = 31;
+        r.now += 16;
+        r.frame();
+        check(r.submissions.size() == 2 && r.count(tel::Action::Hello) == 1,
+              "Resume dropped the current Create or retained the Cancel");
+        r.present(r.submissions.back());
+        check(r.count(tel::Action::Presented) == 1 && r.sent.back().id == 43,
+              "Only the replacement's successful draw should certify a warning");
+
+        r.caps = 0;
+        r.now += 30001;
+        r.addon->pulse();
+        check(r.count(tel::Action::Hello) == 2 && r.sent.back().revision == 0,
+              "A long background pause let the server lease expire");
+        r.now += 1999;
+        r.addon->pulse();
+        check(r.count(tel::Action::Hello) == 2, "An unacknowledged renewal retried too early");
+        ++r.now;
+        r.addon->pulse();
+        check(r.count(tel::Action::Hello) == 3, "An unacknowledged renewal did not retry after two seconds");
+    }
 }
 
 void drawn_anchor_boundary() {
@@ -385,6 +437,24 @@ void drawn_anchor_boundary() {
     check(near(vertices[0].position[0], 134) && near(vertices[0].position[1], 112) && near(vertices[0].position[2], .035f),
           "Drawn pose XY conversion or valid cached-floor reference was lost");
     check(near(vertices[1].position[0], 134) && near(vertices[1].position[1], 120), "SDK drawn heading was swapped or converted twice");
+    const auto floor_queries = r.probes.size();
+    const auto anchor_queries = r.anchor_queries;
+    r.remaining_queries = 1; // Enough to verify the exact current actor pose only.
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 2 && r.probes.size() == floor_queries && r.anchor_queries == anchor_queries + 1,
+          "A stable actor pose could not reuse the certified terrain footprint");
+    r.actors[71].position[0] += 2;
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 2, "Movement reused an old actor footprint");
+    r.remaining_queries = 262144;
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 3 && near(r.submissions.back().vertices[0].position[0], 136),
+          "An actor-following warning did not recover at the changed pose");
+    const auto duplicate_pose_queries = r.anchor_queries;
+    put(bytes, 20, 43);
+    r.incoming(bytes); r.now += 16; r.frame();
+    check(r.submissions.size() == 5 && r.anchor_queries == duplicate_pose_queries + 1,
+          "Warnings following the same actor repeated the acquired-frame pose query");
     r.actors[71].flags = 0; r.now += 16; const auto before = r.submissions.size(); r.frame();
     check(r.submissions.size() == before, "Anchor without actual drawn-pose flag produced a fallback marker");
 }
@@ -422,6 +492,52 @@ void draping_survives_appearance_choices() {
             return near(v.position[2], 4.035f);
         }), "server colors or edge toggle disabled connected low-obstacle draping");
     }
+}
+
+void failed_world_warning_reaches_hud_without_proof() {
+    Rig r;
+    r.api.add_ui_function = [](void* context, const char*, HailstoneUiFn fn, void* user) {
+        auto& rig = *static_cast<Rig*>(context);
+        rig.fallback_ui = fn;
+        rig.fallback_ui_context = user;
+        return 1;
+    };
+    r.api.arg = [](void*, const HailstoneArgs*, std::size_t n, HailstoneValue* value) {
+        if (n) return 0;
+        value->kind = HAILSTONE_STRING;
+        value->s = "fallback";
+        return 1;
+    };
+    r.api.out_begin_array = [](void*, HailstoneOut*) {};
+    r.api.out_end = [](void*, HailstoneOut*) {};
+    r.api.out_begin_table = [](void*, HailstoneOut* out) { ++reinterpret_cast<FallbackOutput*>(out)->tables; };
+    r.api.out_key = [](void*, HailstoneOut* out, const char* key) { reinterpret_cast<FallbackOutput*>(out)->key = key; };
+    r.api.out_value = [](void*, HailstoneOut* out, const HailstoneValue* value) {
+        auto& capture = *reinterpret_cast<FallbackOutput*>(out);
+        if (value->kind == HAILSTONE_STRING) capture.text[capture.key] = value->s;
+        if (value->kind == HAILSTONE_INT) capture.numbers[capture.key] = value->i;
+    };
+    r.addon->initialize();
+    r.connect();
+    auto optional = circle();
+    optional[9] = std::byte{0};
+    r.incoming(optional);
+    r.sample = [](float, float, float, float&) { return HAILSTONE_WORLD_MISSING; };
+    r.now += 16; r.frame(); r.finish(r.serial); r.addon->pulse();
+    const auto poll = [&]() {
+        FallbackOutput capture;
+        check(r.fallback_ui && r.fallback_ui(r.fallback_ui_context, reinterpret_cast<const HailstoneArgs*>(&r),
+                                             reinterpret_cast<HailstoneOut*>(&capture)),
+              "Fallback HUD query was not callable");
+        return capture;
+    };
+    const auto failed = poll();
+    check(r.submissions.empty() && r.count(tel::Action::Presented) == 0 && failed.tables == 2 &&
+          failed.text.at("reason") == "terrain" && failed.numbers.at("id") == 42 &&
+          failed.numbers.at("remaining_ms") > 0 && !failed.numbers.contains("distance"),
+          "A valid optional warning without terrain did not reach the HUD, reported camera distance, or earned proof");
+    r.incoming(control(tel::Action::Cancel, 42, 4));
+    check(poll().tables == 1, "A cancelled warning stayed visible in the HUD before the next world frame");
 }
 
 void sustained_warning_under_submission_pressure() {
@@ -660,7 +776,8 @@ void invalid_scene_and_clock_guards() {
 int main() {
     try {
         actual_adapter_flow_and_axes(); absent_services_and_routing(); receipt_failure_paths(); lifecycle_and_runtime_capability();
-        drawn_anchor_boundary(); draping_survives_appearance_choices(); malformed_patch_results(); near_collinear_host_region();
+        skipped_draws_keep_current_warnings();
+        drawn_anchor_boundary(); failed_world_warning_reaches_hud_without_proof(); draping_survives_appearance_choices(); malformed_patch_results(); near_collinear_host_region();
         sustained_warning_under_submission_pressure(); bounded_surface_work_keeps_later_warnings_visible();
         footprint_cache_invalidation_and_decoration_receipts(); regional_cache_preserves_static_footprints();
         resume_legacy_surface_work_across_frames(); cached_warning_preserves_server_pulse();

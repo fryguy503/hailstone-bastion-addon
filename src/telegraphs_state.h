@@ -81,6 +81,7 @@ public:
     bool ready() const { return selected_ && in_zone_ && epoch_ && capabilities_.complete_v3() && negotiated_; }
     bool recovering() const { return recovering_; }
     bool clock_synchronized() const { return offset_.has_value(); }
+    bool marker_active(const RenderTag& tag, std::uint32_t now) const { return current(tag, now, false); }
     std::optional<std::uint32_t> server_minus_local() const { return offset_; }
     std::size_t active_count() const { return live_.size(); }
     std::size_t pending_count() const { return staged_.size(); }

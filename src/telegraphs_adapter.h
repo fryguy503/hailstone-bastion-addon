@@ -16,9 +16,10 @@ struct TerrainStamp {
     std::uint32_t collision_revision = 0;
     std::optional<std::array<float, 4>> bounds;
     std::optional<std::uint32_t> regional_revision;
+    std::optional<MarkerPlacement> pose;
 };
 
-// Completed native queries from a still-building static warning. A null patch
+// Completed native queries from a warning at one exact pose. A null patch
 // value records a complete planar certificate without allocating its payload.
 struct TerrainBuildMemo {
     TerrainStamp stamp;
@@ -58,8 +59,15 @@ private:
         MarkerReceipt receipt;
         TerrainStamp terrain;
     };
+    struct FallbackWarning {
+        RenderMarker marker;
+        std::string_view reason;
+        std::optional<float> distance;
+        std::string_view direction;
+    };
     bool services() const;
     bool clock(std::uint64_t& now);
+    bool scene_context();
     void unavailable();
     bool send(const Bytes& bytes) override;
     std::uint64_t submit(const HailstoneWorldFrame&, std::uint64_t revision,
@@ -75,6 +83,11 @@ private:
 
     const PluginHostApi* host_ = nullptr;
     Session session_;
+    struct CharacterScene {
+        std::uint32_t spawn = 0, zone = 0, instance = 0;
+        bool operator==(const CharacterScene&) const = default;
+    };
+    std::optional<CharacterScene> character_scene_;
     bool selected_ = false, in_zone_ = false, available_ = false;
     std::uint32_t epoch_ = 0;
     std::optional<std::uint32_t> retired_zone_epoch_;
@@ -82,11 +95,13 @@ private:
     std::optional<std::uint64_t> last_clock_, last_frame_clock_;
     std::uint64_t last_host_frame_ = 0, next_tag_ = 0;
     GeometryOptions cached_options_;
-    std::map<std::uint64_t, Footprint> footprints_; // Current static marker incarnations only.
+    std::map<std::uint64_t, Footprint> footprints_; // Current marker incarnations and poses only.
     std::map<std::uint64_t, TerrainBuildMemo> terrain_builds_;
     std::map<std::uint64_t, TerrainBuildMemo> countdown_terrain_;
     std::vector<HailstoneWorldVertex> pulse_vertices_;
+    std::array<std::size_t, 2> fresh_actor_order_{};
     std::size_t reused_footprints_ = 0, deferred_warning_footprints_ = 0;
+    std::vector<FallbackWarning> fallbacks_;
     std::deque<PendingFrame> pending_; // Matches Session's eight issued-frame bound.
     Preferences preferences_{"telegraphs.cfg", preferences()};
     std::vector<RenderMarker> local_;

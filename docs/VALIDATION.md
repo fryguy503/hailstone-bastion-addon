@@ -1,5 +1,21 @@
 # Preview validation — 2026-11-17
 
+## Preview 9 raid warning continuity — 2026-11-23
+
+- The three concurrent Mistmoore replays used frame intervals of 17, 67 and 200 ms.
+  The 200 ms fixture reported skipped background draws between rendered frames.
+  Each replay covered 15 terrain and warning combinations with 12 samples per
+  combination. Across the three replays, 102 samples submitted ground geometry
+  and 438 queued a HUD warning. Every expected sampled warning had coverage.
+- The adapter checks actual actor placement and terrain revisions before reusing
+  geometry. Tests cover a moving or missing source, server cancellation across
+  draw gaps, unacknowledged lease renewal, and fallback alerts that earn no
+  terrain presentation receipt.
+- The Modern and Gamepad fixtures check automatic fallback display, the action
+  and impact clock, click-through behavior, and cleanup when ground geometry
+  recovers. Replay timing and presentation are simulated. Live box performance,
+  camera visibility and raid acceptance require gameplay verification.
+
 ## Preview 8 encounter telegraphs — 2026-11-22
 
 - All 34 Windows x64 add-on suites passed, including the footprint, terrain cache,

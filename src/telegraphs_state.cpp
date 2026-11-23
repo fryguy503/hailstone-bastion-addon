@@ -228,7 +228,9 @@ void Session::pulse(std::uint32_t now, WireSender& sender) {
     const auto bytes = encode(request);
     const bool sent = bytes && sender.send(*bytes);
     if (!sent) hello.used = false;
-    next_hello_ = now + (!sent || !negotiated_ || snapshot_requested_ ? 2000u : 30000u);
+    // A successful queue means the Hello was sent, not that the server renewed
+    // our lease. Wait for its ACK before returning to the regular interval.
+    next_hello_ = now + 2000u;
 }
 
 RenderFrame Session::prepare_frame(std::uint32_t now) {

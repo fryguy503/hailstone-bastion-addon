@@ -76,27 +76,13 @@ public:
             return finish(GeometryStatus::NoDecoration);
         required_ = (p_.flags & RequiredDisplay) != 0;
         clamp_ = (p_.flags & ClampToTerrain) != 0;
-        origin_ = {p_.x, p_.y}; reference_ = p_.z;
-        float heading = p_.heading;
-        if (p_.anchor != Anchor::World && (p_.flags & (FollowPosition | FollowHeading))) {
-            if (!work()) return finish(result_.status);
-            const auto anchor = queries_.drawn_anchor(p_.anchor == Anchor::Owner ? p_.owner_id : p_.anchor_id);
-            if (anchor.status == SampleStatus::Missing) return finish(GeometryStatus::MissingAnchor);
-            if (anchor.status != SampleStatus::Resolved) return finish(GeometryStatus::DeferredAnchor);
-            if (p_.flags & FollowPosition) {
-                if (!finite(anchor.x) || !finite(anchor.y) || !finite(anchor.z)) return finish(GeometryStatus::Numerical);
-                origin_ = {anchor.x, anchor.y}; reference_ = anchor.z;
-                if (clamp_ && anchor.floor_reference_valid) {
-                    if (!finite(anchor.floor_z)) return finish(GeometryStatus::Numerical);
-                    reference_ = anchor.floor_z;
-                }
-            }
-            if (p_.flags & FollowHeading) {
-                if (!finite(anchor.heading)) return finish(GeometryStatus::Numerical);
-                heading = anchor.heading;
-            }
-        }
-        const float angle = std::fmod(heading, 512.0f) * (tau / 512.0f);
+        if (follows_anchor(p_) && !work()) return finish(result_.status);
+        MarkerPlacement placement;
+        const auto placement_status = marker_placement(p_, queries_, placement);
+        if (placement_status != GeometryStatus::Complete) return finish(placement_status);
+        origin_ = {placement.x, placement.y};
+        reference_ = placement.z;
+        const float angle = std::fmod(placement.heading, 512.0f) * (tau / 512.0f);
         forward_ = {std::sin(angle), std::cos(angle)};
         lateral_ = {std::cos(angle), -std::sin(angle)};
         patch_ = options_.bounded_draping ? std::max(8.0f, marker_radius(p_) / 6) :
@@ -364,6 +350,24 @@ private:
             limit - budget_.vertices_used - result_.vertices.size() < 3) { fail(GeometryStatus::Budget); return; }
         result_.vertices.insert(result_.vertices.end(), {a, b, c});
     }
+    bool refine_actor_patch(const TriangleVertex& a, const TriangleVertex& b, const TriangleVertex& c, unsigned depth) {
+        if (!follows_anchor(p_) || !result_.complete() || depth >= 24 || actor_refinements_ >= 64) return false;
+        const std::array corners{a, b, c};
+        const std::array edges{length2(xy(b) - xy(a)), length2(xy(c) - xy(b)), length2(xy(a) - xy(c))};
+        const auto edge = static_cast<unsigned>(std::max_element(edges.begin(), edges.end()) - edges.begin());
+        if (edges[edge] < .0625f) return false;
+        const auto& first = corners[edge];
+        const auto& next = corners[(edge + 1) % 3];
+        const auto& last = corners[(edge + 2) % 3];
+        const auto mid = middle(first, next);
+        if ((mid.x == first.x && mid.y == first.y) || (mid.x == next.x && mid.y == next.y)) return false;
+        ++actor_refinements_;
+        // Subdivision is a retry of the proof. Both child patches must be
+        // independently certified before their vertices can be submitted.
+        triangle(first, mid, last, depth + 1);
+        triangle(mid, next, last, depth + 1);
+        return true;
+    }
     void triangle(TriangleVertex a, TriangleVertex b, TriangleVertex c, unsigned depth = 0) {
         if (!work()) return;
         if(depth&&options_.bounded_draping&&clipping_sliver(a,b,c)) return;
@@ -379,7 +383,10 @@ private:
             for (auto& point : floor_vertices) point.z -= p_.p5 + surface_offset;
             patch = queries_.surface_patch(floor_vertices, minor_step);
             if (patch.status == PatchStatus::Planar) { emit(a, b, c); return; }
-            if (patch.status != PatchStatus::Mismatch && patch.status != PatchStatus::Missing) { fail(GeometryStatus::DeferredFloor); return; }
+            if (patch.status != PatchStatus::Mismatch && patch.status != PatchStatus::Missing) {
+                if (!refine_actor_patch(a, b, c, depth)) fail(GeometryStatus::DeferredFloor);
+                return;
+            }
             if (!finite(patch.x) || !finite(patch.y) || (patch.height_known && !finite(patch.z))) { fail(GeometryStatus::Numerical); return; }
             const std::array<TriangleVertex,3> corners={a,b,c};
             const std::array<float,3> elevation={std::abs(a.z-b.z),std::abs(b.z-c.z),std::abs(c.z-a.z)};
@@ -406,7 +413,8 @@ private:
                         return;
                     }
                 }
-                if (depth >= 48 || !project_face({a,b,c},patch,depth)) fail(GeometryStatus::Numerical);
+                if ((depth >= 48 || !project_face({a,b,c},patch,depth)) && !refine_actor_patch(a, b, c, depth))
+                    fail(GeometryStatus::Numerical);
                 return;
             }
         }
@@ -953,6 +961,7 @@ private:
     const GeometryOptions& options_;
     MarkerGeometry result_;
     bool required_ = false, clamp_ = false;
+    unsigned actor_refinements_ = 0;
     XY origin_{}, forward_{}, lateral_{};
     float reference_ = 0, patch_ = 16;
     static constexpr float minor_step = 6, walk_spacing = 2;
@@ -970,6 +979,31 @@ private:
     std::vector<FaceProof> face_cache_;
 };
 } // namespace
+
+bool follows_anchor(const Packet& packet) {
+    return packet.anchor != Anchor::World && (packet.flags & (FollowPosition | FollowHeading));
+}
+
+GeometryStatus marker_placement(const Packet& packet, GeometryQueries& queries, MarkerPlacement& placement) {
+    placement = {packet.x, packet.y, packet.z, packet.heading};
+    if (!follows_anchor(packet)) return GeometryStatus::Complete;
+    const auto anchor = queries.drawn_anchor(packet.anchor == Anchor::Owner ? packet.owner_id : packet.anchor_id);
+    if (anchor.status == SampleStatus::Missing) return GeometryStatus::MissingAnchor;
+    if (anchor.status != SampleStatus::Resolved) return GeometryStatus::DeferredAnchor;
+    const auto usable = [](float value) { return std::isfinite(value) && std::abs(value) <= 2000000; };
+    if (packet.flags & FollowPosition) {
+        if (!usable(anchor.x) || !usable(anchor.y) || !usable(anchor.z)) return GeometryStatus::Numerical;
+        placement.x = anchor.x;
+        placement.y = anchor.y;
+        placement.z = (packet.flags & ClampToTerrain) && anchor.floor_reference_valid ? anchor.floor_z : anchor.z;
+        if (!usable(placement.z)) return GeometryStatus::Numerical;
+    }
+    if (packet.flags & FollowHeading) {
+        if (!usable(anchor.heading)) return GeometryStatus::Numerical;
+        placement.heading = anchor.heading;
+    }
+    return GeometryStatus::Complete;
+}
 
 MarkerGeometry build_geometry(const RenderMarker& marker, std::uint32_t local_now,
                               GeometryQueries& queries, GeometryBudget& budget,

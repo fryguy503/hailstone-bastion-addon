@@ -1,6 +1,7 @@
 local Host=dofile("lib/bastion_host.lua")
 local R=dofile("lib/citadel_received.lua")
 local draw=dofile("lib/telegraphs.lua")
+local drawAlerts=dofile("lib/telegraph_alerts.lua")
 BASTION_UI=BASTION_UI or {}
 ui.window("Bastion Telegraphs",function()
  if not BASTION_UI.telegraphs then return end
@@ -10,4 +11,9 @@ ui.window("Bastion Telegraphs",function()
  if visible then draw(p,state,R.s)end
  BASTION_UI.telegraphs=open
  if R.finish()then BASTION_UI.telegraphs=false end
+end)
+
+ui.window("Bastion Encounter Warnings",function()
+ local p=Host.Plugin("bastion")
+ if p and p.telegraphs then drawAlerts(p.telegraphs("fallback")) end
 end)

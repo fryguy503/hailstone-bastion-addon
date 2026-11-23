@@ -4,7 +4,7 @@ A standalone Bastion addon with native Hailstone Lua windows for Modern and Game
 Open **`/bastion`** for tools, character settings, and the searchable server command catalog.
 `/citadel` and `/cit` remain compatible aliases.
 
-Preview 8 uses Hailstone's server add-on services, modular UI extensions and map ownership.
+Preview 9 uses Hailstone's server add-on services, modular UI extensions and map ownership.
 The map-local filter panel uses `hs.UI` 1.5. Server-only NPC Find, saved corpse visibility,
 Citadel song timing and server-approved fast camp require the corresponding Hailstone updates.
 See [SDK compatibility](sdk/README.md).
@@ -26,7 +26,7 @@ See [SDK compatibility](sdk/README.md).
 | Kinbound | Item labels, explanation, nested-item loot warnings and safe mixed Loot All confirmations. Sharing and attunement remain server decisions. |
 | Gear ratings | Server-provided item/augment ratings, equipped and best-owned summaries, configuration-aware metadata and retry state. |
 | Home city | Authoritative selection grants and choices, explicit review, refresh and reminder handling. |
-| Encounter telegraphs | Ground-conforming shapes, coral/blue/gold/mint roles, mechanic glyphs, readable impact clocks and a high-contrast preset. Required footprints take priority and reuse verified terrain geometry while it is current. The clock draws separately so terrain work on the timer cannot erase the warning. |
+| Encounter telegraphs | Ground-conforming shapes, coral/blue/gold/mint roles, mechanic glyphs, readable impact clocks and a high-contrast preset. Required footprints take priority and reuse verified terrain geometry while it is current. When a footprint cannot draw, both UI packs show an encounter alert with the action and time to impact. |
 | Firefell | FFZ1 current-instance negotiation and naming for zone 406, versions 249–255. Old context cannot label a later instance. |
 | Server shortcuts | DLL-compatible slash shortcuts and a 205-entry registered server/quest command catalog, with staff access labels, search, help, copy, and explicit argument preparation/send. |
 | Native integration checks | The existing DLL check receives the actual loaded `bastion.dll` checksum before login file checks. Newer servers can challenge the actual Hailstone executable/addon pair. Settings distinguish an unconfirmed legacy submission from explicit native acceptance. Existing game-file checks continue. |

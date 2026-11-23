@@ -1,5 +1,12 @@
 # Changes
 
+## 0.1.0-preview.9
+
+- Keep active encounter warnings and server updates across skipped background draws.
+- Reuse terrain work for actor-following warnings while their resolved placement and terrain are current.
+- Show an encounter alert in Modern and Gamepad when a ground warning cannot draw.
+- Retry unacknowledged telegraph readiness renewals before the lease can expire.
+
 ## 0.1.0-preview.8
 
 - Keep verified encounter warning footprints visible while other markers use the terrain budget.

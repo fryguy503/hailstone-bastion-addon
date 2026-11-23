@@ -90,6 +90,13 @@ enum class GeometryStatus {
     Complete, NotStarted, Expired, Invalid, MissingAnchor, DeferredAnchor,
     MissingFloor, DeferredFloor, Cliff, Budget, Numerical, NoDecoration
 };
+struct MarkerPlacement {
+    float x = 0, y = 0, z = 0, heading = 0;
+    bool operator==(const MarkerPlacement&) const = default;
+};
+bool follows_anchor(const Packet& packet);
+GeometryStatus marker_placement(const Packet& packet, GeometryQueries& queries, MarkerPlacement& placement);
+
 struct MarkerGeometry {
     RenderTag tag;
     GeometryStatus status = GeometryStatus::Invalid;

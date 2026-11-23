@@ -153,6 +153,7 @@ bool Adapter::command(std::string_view arguments) {
             "; active " + std::to_string(session_.active_count()) + "; local previews " + std::to_string(local_.size()) +
             "; cached footprints drawn " + std::to_string(reused_footprints_) +
             "; required footprints deferred " + std::to_string(deferred_warning_footprints_) +
+            "; HUD fallback warnings " + std::to_string(fallbacks_.size()) +
             "; opacity " + std::to_string(preferences_.get("opacity")) + "%."); return true;
     }
     if (operation == "test") {
@@ -193,6 +194,38 @@ int Adapter::ui(const HailstoneArgs* args,HailstoneOut* out) {
     services::Output result{host_,out}; if (!result.valid()) return 0;
     const auto op = services::argument(host_,args,0,16); if (!op) return 0;
     preferences_.refresh(host_);
+    if (*op == "fallback") {
+        result.begin();
+        result.array("entries");
+        if (selected_ && in_zone_ && HAILSTONE_HOST_HAS(host_, monotonic_ms)) {
+            const auto now = host_->monotonic_ms(host_->host);
+            const auto tick = static_cast<std::uint32_t>(now);
+            if (last_frame_clock_ && now >= *last_frame_clock_ && now - *last_frame_clock_ <= 1000) {
+                for (const auto& fallback : fallbacks_) {
+                    const auto& marker = fallback.marker;
+                    const auto& packet = marker.packet;
+                    if ((!preferences_.get("enabled") && !(packet.flags & RequiredDisplay)) ||
+                        !session_.marker_active(marker.tag, tick) || reached(tick, marker.local_impact)) continue;
+                    result.begin();
+                    result.number("id", packet.id);
+                    result.number("generation", packet.generation);
+                    result.number("revision", packet.revision);
+                    result.number("shape", static_cast<unsigned>(packet.shape));
+                    result.number("mechanic", static_cast<unsigned>(packet.mechanic));
+                    result.number("disposition", static_cast<unsigned>(packet.disposition));
+                    result.number("remaining_ms", distance(marker.local_impact, tick));
+                    result.string("reason", fallback.reason);
+                    if (fallback.distance && *fallback.distance <= 4000000)
+                        result.number("distance", static_cast<std::int64_t>(std::lround(*fallback.distance)));
+                    if (!fallback.direction.empty()) result.string("direction", fallback.direction);
+                    result.end();
+                }
+            }
+        }
+        result.end();
+        result.end();
+        return 1;
+    }
     if (*op == "command") { const auto line = services::argument(host_,args,1,192); if (line) command(*line); }
     else if (*op == "set") {
         const auto key = services::argument(host_,args,1,16); HailstoneValue value{};

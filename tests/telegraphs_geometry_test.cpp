@@ -284,6 +284,32 @@ void anchors() {
     check(batch.complete() && near(batch.vertices[0].z, 30.035f), "Unclamped actor geometry used cached floor instead of actual drawn Z");
 }
 
+void following_terrain_refines_unavailable_patches() {
+    Queries q;
+    auto m = marker();
+    m.packet.anchor = tel::Anchor::Owner;
+    m.packet.owner_id = 71;
+    m.packet.flags |= tel::FollowPosition | tel::ClampToTerrain | tel::RequiredDisplay;
+    q.drawn[71] = {tel::SampleStatus::Resolved, 100, 200, 0, 0};
+    tel::GeometryOptions options;
+    options.bounded_draping = true;
+    q.patch_override = [](const auto& points, std::size_t) {
+        const auto& a = points[0];
+        const auto& b = points[1];
+        const auto& c = points[2];
+        if (std::abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) > 24)
+            return tel::SurfacePatchSample{};
+        return tel::SurfacePatchSample{tel::PatchStatus::Planar};
+    };
+    const auto refined = draw(m, q, 600, options);
+    check(refined.complete() && refined.terrain_conformed && refined.vertices.size() > 24 &&
+          near(area(refined), 4 * 64 * std::sin(3.14159265358979323846f / 4), .01f),
+          "Refining the actor's terrain proof lost coverage of the warning footprint");
+    q.patch_override = [](const auto&, std::size_t) { return tel::SurfacePatchSample{}; };
+    atomic_failure(draw(m, q, 600, options), tel::GeometryStatus::DeferredFloor,
+                   "Uncertified actor terrain emitted a complete ground warning");
+}
+
 void terrain() {
     Queries q;
     auto m = marker(tel::Shape::Rectangle); m.packet.p1 = 40; m.packet.p2 = 24;
@@ -796,7 +822,7 @@ void source_face_cache_contract() {
 
 int main() {
     try {
-        silhouettes_and_coordinates(); styles_and_palette(); glyphs_and_countdown(); anchors(); terrain(); budgets_and_invalid_input(); complete_supported_matrix(); enhanced_presentation(); bounded_draping(); refined_glyphs_and_clock(); layered_warning_and_clock(); bounded_draping_cost(); off_grid_minor_props(); whole_patch_cache_contract(); donut_origin_hole(); source_face_cache_contract();
+        silhouettes_and_coordinates(); styles_and_palette(); glyphs_and_countdown(); anchors(); following_terrain_refines_unavailable_patches(); terrain(); budgets_and_invalid_input(); complete_supported_matrix(); enhanced_presentation(); bounded_draping(); refined_glyphs_and_clock(); layered_warning_and_clock(); bounded_draping_cost(); off_grid_minor_props(); whole_patch_cache_contract(); donut_origin_hole(); source_face_cache_contract();
         std::cout << "Telegraph geometry: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& error) {
