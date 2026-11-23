@@ -600,6 +600,36 @@ void refined_glyphs_and_clock() {
           "compact clock did not decrease with the remaining impact time");
     check(!has_color(draw(m, q, 1100, options), 0xffedf4fbu), "compact clock survived its exact impact time");
 }
+void layered_warning_and_clock() {
+    Queries queries;
+    auto warning = marker(tel::Shape::Cone);
+    warning.packet.flags = tel::Filled | tel::Outline | tel::Directional | tel::Pulse |
+        tel::Countdown | tel::ClampToTerrain | tel::RequiredDisplay;
+    tel::GeometryOptions options;
+    options.enhanced_style = options.bounded_draping = true;
+    options.layer = tel::GeometryLayer::Footprint;
+    const auto early = draw(warning, queries, 300, options);
+    const auto late = draw(warning, queries, 900, options);
+    check(early.receipt().complete_geometry && early.receipt().terrain_conformed && has_color(early, 0xffedf4fbu),
+          "A cached footprint lost its terrain presentation proof or actionable direction cue");
+    check(std::equal(early.vertices.begin(), early.vertices.end(), late.vertices.begin(), late.vertices.end(),
+          [](const auto& a, const auto& b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.argb == b.argb; }),
+          "Cached footprint depends on animated presentation time");
+
+    options.layer = tel::GeometryLayer::Countdown;
+    const auto clock = draw(warning, queries, 300, options);
+    check(clock.complete() && clock.terrain_conformed && !clock.receipt().complete_geometry &&
+          !clock.receipt().terrain_conformed && has_color(clock, 0xffedf4fbu),
+          "Clock mesh was missing or counted as a required warning");
+    check(std::all_of(clock.vertices.begin(), clock.vertices.end(), [](const auto& v) {
+        return std::hypot(v.x, v.y) < 3;
+    }), "Clock-only pass emitted hazard geometry");
+    atomic_failure(draw(warning, queries, 1100, options), tel::GeometryStatus::NoDecoration,
+                   "Clock layer emitted work after impact");
+    warning.packet.flags &= ~tel::Countdown;
+    atomic_failure(draw(warning, queries, 300, options), tel::GeometryStatus::NoDecoration,
+                   "Clock layer emitted work for a marker without the countdown flag");
+}
 void bounded_draping_cost() {
     Queries q;
     tel::GeometryOptions options; options.enhanced_style = options.bounded_draping = true;
@@ -732,13 +762,16 @@ void source_face_cache_contract() {
     std::map<std::array<float,9>,unsigned> attempts;
     q.patch_override=[&](const auto& triangle,std::size_t) {
         const auto proof=tel::fixture::certify_props(triangle,q.props);
-        std::array<float,9> key{};bool whole_ground=false;
+        std::array<float,9> key{};bool whole_ground=false, whole_prop=true;
         for(std::size_t n=0;n<3;++n) {
             key[n*3]=triangle[n].x;key[n*3+1]=triangle[n].y;key[n*3+2]=triangle[n].z;
             if(std::abs(triangle[n].x)>10000||std::abs(triangle[n].y)>10000) whole_ground=true;
+            const auto& point = triangle[n];
+            whole_prop = whole_prop && near(point.z, raised) &&
+                (near(point.x,4.1f) || near(point.x,6.1f)) && (near(point.y,6.3f) || near(point.y,8.3f));
         }
+        if (whole_ground || whole_prop) ++attempts[key];
         if(whole_ground) {
-            ++attempts[key];
             const tel::fixture::Point a{triangle[0].x,triangle[0].y},b{triangle[1].x,triangle[1].y},c{triangle[2].x,triangle[2].y},center{5.1,7.3};
             const double determinant=tel::fixture::side(a,b,c);
             const double wa=tel::fixture::side(b,c,center)/determinant,wb=tel::fixture::side(c,a,center)/determinant;
@@ -751,18 +784,19 @@ void source_face_cache_contract() {
     auto batch=draw(m,q,600,options);
     check(batch.complete()&&covers_top(batch,5.1f,7.3f,4.035f),"source-face cache hid the raised prop");
     check(!attempts.empty()&&std::all_of(attempts.begin(),attempts.end(),[](const auto& attempt){return attempt.second==1;}),
-          "failed source-face certificates were queried repeatedly in one build");
+          "source-face certificates were never queried or repeated in one build");
+    attempts.clear();
     raised=5;q.props.front().height=5;
     batch=draw(m,q,600,options);
     check(batch.complete()&&covers_top(batch,5.1f,7.3f,5.035f),"a source-face proof survived a changed raised surface");
-    check(std::all_of(attempts.begin(),attempts.end(),[](const auto& attempt){return attempt.second==2;}),
+    check(!attempts.empty()&&std::all_of(attempts.begin(),attempts.end(),[](const auto& attempt){return attempt.second==1;}),
           "source-face attempted/proven state leaked across invocations");
 }
 }
 
 int main() {
     try {
-        silhouettes_and_coordinates(); styles_and_palette(); glyphs_and_countdown(); anchors(); terrain(); budgets_and_invalid_input(); complete_supported_matrix(); enhanced_presentation(); bounded_draping(); refined_glyphs_and_clock(); bounded_draping_cost(); off_grid_minor_props(); whole_patch_cache_contract(); donut_origin_hole(); source_face_cache_contract();
+        silhouettes_and_coordinates(); styles_and_palette(); glyphs_and_countdown(); anchors(); terrain(); budgets_and_invalid_input(); complete_supported_matrix(); enhanced_presentation(); bounded_draping(); refined_glyphs_and_clock(); layered_warning_and_clock(); bounded_draping_cost(); off_grid_minor_props(); whole_patch_cache_contract(); donut_origin_hole(); source_face_cache_contract();
         std::cout << "Telegraph geometry: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& error) {

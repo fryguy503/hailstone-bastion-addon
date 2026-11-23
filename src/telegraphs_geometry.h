@@ -25,6 +25,9 @@ struct TriangleVertex {
     std::uint32_t argb = 0;
 };
 enum class PatchStatus { Deferred, Planar, Mismatch, Missing };
+// The host still certifies coverage of the entire patch. Small height differences
+// below the render lift need no separate clipped face.
+inline constexpr float kSurfaceProofTolerance = .018f;
 struct SurfacePatchSample {
     PatchStatus status = PatchStatus::Deferred;
     float x = 0, y = 0, z = 0;
@@ -51,6 +54,7 @@ public:
     // a strict-interior witness for subdivision. Unavailable proof is Deferred.
     virtual SurfacePatchSample surface_patch(const std::array<TriangleVertex, 3>&, float) { return {}; }
 };
+enum class GeometryLayer { Complete, Footprint, Countdown };
 struct GeometryOptions {
     // Deliberate modern-renderer difference: centered EQ-unit ribbons replace
     // native screen-space lines. The filled hazard silhouette is unchanged.
@@ -64,6 +68,8 @@ struct GeometryOptions {
     // small props and successive stairs. The raw protocol renderer remains
     // available to tests without changing its reference-layer policy.
     bool bounded_draping = false;
+    GeometryLayer layer = GeometryLayer::Complete;
+    bool operator==(const GeometryOptions&) const = default;
 };
 struct GeometryBudget {
     static constexpr std::size_t kMaximumVertices = 393216;
@@ -82,7 +88,7 @@ struct GeometryBudget {
 };
 enum class GeometryStatus {
     Complete, NotStarted, Expired, Invalid, MissingAnchor, DeferredAnchor,
-    MissingFloor, DeferredFloor, Cliff, Budget, Numerical
+    MissingFloor, DeferredFloor, Cliff, Budget, Numerical, NoDecoration
 };
 struct MarkerGeometry {
     RenderTag tag;
@@ -91,8 +97,9 @@ struct MarkerGeometry {
     // describes CPU generation, not GPU submission/presentation or readiness.
     std::vector<TriangleVertex> vertices;
     bool terrain_conformed = false;
+    bool covers_warning = true;
     bool complete() const { return status == GeometryStatus::Complete; }
-    MarkerReceipt receipt() const { return {tag, complete(), terrain_conformed}; }
+    MarkerReceipt receipt() const { return {tag, complete() && covers_warning, terrain_conformed && covers_warning}; }
 };
 
 // Host thread only. Budgets are shared across all markers in one frame. Floor

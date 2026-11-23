@@ -1,15 +1,20 @@
 # Public Hailstone SDK snapshot
 
-These MIT-licensed headers are based on Hailstone's public SDK. Preview 7 refreshes
-`hailstone_plugin.h` and its nameplate and UI contribution dependencies from client revision
-`eca9cf1de5cf4cee9e50673281c4c93b034e499a`, with the optional actor-guide field.
+These MIT-licensed headers are based on Hailstone's public SDK. Preview 8 uses
+the ABI 3 table from client revision `5ffcaccafd2bb119875f4237b9124f58571e7813`
+and includes the optional bounded surface patch and regional surface reuse extensions.
 
 `hailstone_plugin.h` SHA256
-`2094d6304abd919551550a5b50c376bfa50c4b12871a8838819eda175c685d96` (LF line endings).
+`b2108fec021f678d9e32803e41bf8a8a690df466df109cd20b545e79f252116e` (LF line endings).
 
 The addon uses `HAILSTONE_PLUGIN` to export the public ABI 3 entry points. It uses
 `HAILSTONE_HOST_HAS` before calling optional host services. Raid observations come from
 `get_raid_data_bulk`, and raid targeting and moves use the public host calls.
+
+When a host provides the optional bounded surface extension, telegraphs can reserve
+native terrain work for other warnings. The optional regional surface revision lets
+telegraphs reuse certified geometry across scenery animation outside the sampled
+region. Older hosts use the original surface patch callback and scene revision.
 
 Map ownership requires the extended map-policy record and a nonzero host-issued world context.
 The addon checks for a usable context before activating on a selected Bastion world.

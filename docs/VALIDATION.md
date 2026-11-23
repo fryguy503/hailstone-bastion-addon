@@ -1,5 +1,19 @@
 # Preview validation — 2026-11-17
 
+## Preview 8 encounter telegraphs — 2026-11-22
+
+- All 34 Windows x64 add-on suites passed, including the footprint, terrain cache,
+  pulse, countdown and exact presentation receipt tests.
+- The offline Arena2 replay used the local zone terrain, the 12 finale placements,
+  and the native Hailstone world geometry admission path. The 48-marker stress case
+  added 36 overlapping required circles. Both checked the 500 ms window and kept
+  presenting every completed footprint across subsequent frames. Resizing the
+  finale goal required a new presentation receipt for that marker.
+- Native loopback checks exercised the packaged DLL with the current host table.
+  The existing host path and the optional bounded query path were exercised
+  separately. The replay used simulated frame timing and presentation receipts.
+  Live encounters and GPU visibility on player systems remain acceptance checks.
+
 ## Preview 6 song twisting and fast camp — 2026-11-19
 
 | Check | Result |

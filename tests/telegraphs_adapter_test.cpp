@@ -14,6 +14,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -79,6 +80,9 @@ struct Rig {
     PluginHostApi api{};
     std::uint64_t now = 100, serial = 0;
     std::uint32_t epoch = 7, caps = 31, maximum_vertices = 98304, maximum_batches = 256, remaining_queries = 262144;
+    std::uint32_t collision_revision = 1;
+    bool regional_cache_valid = true;
+    std::uint32_t regional_revision = 0;
     bool admission = true, wire_success = true;
     std::vector<tel::Packet> sent;
     std::vector<Saved> submissions;
@@ -160,6 +164,7 @@ struct Rig {
     }
     HailstoneWorldFrame context() {
         HailstoneWorldFrame f{}; f.size = sizeof(f); f.capabilities = caps; f.frame = ++serial; f.epoch = epoch;
+        f.collision_revision = collision_revision;
         f.now_ms = now; f.maximum_batches = maximum_batches; f.maximum_vertices = maximum_vertices; f.remaining_queries = remaining_queries;
         f.viewport[2] = 1920; f.viewport[3] = 1080;
         for (unsigned i = 0; i < 4; ++i) f.view_projection[i * 5] = 1;
@@ -270,6 +275,35 @@ void malformed_patch_results() {
         };
         r.incoming(circle());r.now+=16;r.frame();r.addon->pulse();
         check(r.submissions.empty()&&r.count(tel::Action::Presented)==0,"unavailable or malformed surface proof submitted/acknowledged a terrain marker");
+    }
+}
+
+void near_collinear_host_region() {
+    for (const double inset : {1.0e-14, .05}) {
+        Rig r; r.connect();
+        unsigned calls = 0;
+        r.patch_sample = [&](const HailstoneWorldSurfacePatch& query, HailstoneWorldSurfacePatchResult& result) {
+            ++calls;
+            if (calls == 1) return HAILSTONE_WORLD_PATCH_DEFERRED; // Skip the whole-marker planar shortcut.
+            if (calls != 2) return HAILSTONE_WORLD_PATCH_PLANAR;
+            result.flags = HAILSTONE_WORLD_PATCH_HEIGHT_KNOWN | HAILSTONE_WORLD_PATCH_SOURCE_FACE | HAILSTONE_WORLD_PATCH_REGION;
+            result.region_count = 4;
+            const float face[] = {-100,-100,0, -100,300,0, 300,-100,0};
+            std::copy(std::begin(face), std::end(face), result.source_face);
+            for (std::size_t axis = 0; axis < 2; ++axis) {
+                const double a = query.vertices[axis], b = query.vertices[axis + 3], c = query.vertices[axis + 6];
+                const double middle = (a + b) / 2;
+                result.region_xy[axis] = a;
+                result.region_xy[axis + 2] = middle + inset * (c - middle);
+                result.region_xy[axis + 4] = b;
+                result.region_xy[axis + 6] = c;
+                result.witness[axis] = static_cast<float>((a + b + c) / 3);
+            }
+            return HAILSTONE_WORLD_PATCH_MISMATCH;
+        };
+        r.incoming(circle()); r.now += 16; r.frame();
+        check(calls >= 2 && r.submissions.size() == (inset < 1e-12 ? 1u : 0u),
+              "Adapter rejected host winding roundoff or admitted a genuinely concave terrain hint");
     }
 }
 
@@ -390,21 +424,190 @@ void draping_survives_appearance_choices() {
     }
 }
 
-void bounded_fair_multiple_markers() {
+void sustained_warning_under_submission_pressure() {
     Rig r; r.connect(); r.maximum_batches = 1; r.maximum_vertices = 24;
     for (std::uint32_t id = 1; id <= 3; ++id) r.incoming(circle(id, static_cast<float>(id * 20), 0));
     auto optional = circle(4, 400, 0); optional[9] = std::byte{0}; r.incoming(optional);
-    std::vector<std::uint32_t> acknowledgements;
     for (unsigned frame = 0; frame < 3; ++frame) {
         r.now += 16; const auto before = r.submissions.size(); r.frame();
         check(r.submissions.size() == before + 1, "Tight frame budget did not admit exactly one required marker");
         const auto saved = r.submissions.back();
-        check(saved.vertices[0].position[1] < 400, "Optional marker ran ahead of a required marker");
+        check(near(saved.vertices[0].position[1], 20), "An admitted warning blinked out under hard submission pressure");
         r.present(saved);
     }
-    for (const auto& packet : r.sent) if (packet.action == tel::Action::Presented) acknowledgements.push_back(packet.id);
-    std::sort(acknowledgements.begin(), acknowledgements.end());
-    check(acknowledgements == std::vector<std::uint32_t>({1, 2, 3}), "Fixed ordering permanently starved a later required marker");
+    check(r.count(tel::Action::Presented) == 1 && r.sent.back().id == 1,
+          "An unshown warning earned a presentation acknowledgement");
+    r.incoming(control(tel::Action::Cancel, 1, 4));
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 4 && near(r.submissions.back().vertices[0].position[1], 40),
+          "Cancelling the visible warning did not free capacity for another required warning");
+}
+
+void bounded_surface_work_keeps_later_warnings_visible() {
+    Rig r;
+    r.caps |= HAILSTONE_WORLD_BOUNDED_SURFACE_PATCH;
+    r.api.world_surface_patch_bounded = [](void* context, const HailstoneWorldSurfacePatch* query,
+                                          HailstoneWorldSurfacePatchResult* result, std::uint32_t* work) {
+        auto& rig = *static_cast<Rig*>(context);
+        check(work && *work && *work <= rig.remaining_queries, "Surface query exceeded the host work allowance");
+        if (query->vertices[1] < 40) {
+            check(*work <= rig.remaining_queries / 2, "First marker was allowed to exhaust other markers' terrain work");
+            return static_cast<int>(HAILSTONE_WORLD_PATCH_DEFERRED); // Exhaust the requested work.
+        }
+        *work = 1;
+        return rig.api.world_surface_patch(context, query, result);
+    };
+    r.remaining_queries = 40;
+    r.connect();
+    r.incoming(circle(1, 20, 0));
+    r.incoming(circle(2, 60, 0));
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 1 && near(r.submissions[0].vertices[0].position[1], 60),
+          "One expensive patch starved a later warning of work");
+    r.present(r.submissions[0]);
+    check(r.count(tel::Action::Presented) == 1 && r.sent.back().id == 2,
+          "Work-starved footprint earned an acknowledgement or blocked the completed warning's proof");
+    r.remaining_queries = 0;
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 2 && near(r.submissions[1].vertices[0].position[1], 60),
+          "A cached warning depended on terrain query capacity for every presentation");
+}
+
+void footprint_cache_invalidation_and_decoration_receipts() {
+    Rig r; r.connect();
+    auto bytes = circle();
+    bytes[8] |= std::byte{static_cast<unsigned char>(tel::Countdown)};
+    r.incoming(bytes); r.now += 16; r.frame();
+    check(r.submissions.size() == 2 && r.submissions[0].vertices.size() == 24,
+          "Warning footprint and countdown were not independent submissions");
+    r.present(r.submissions[1]);
+    check(r.count(tel::Action::Presented) == 0, "Countdown geometry alone earned a warning proof");
+    r.maximum_vertices = 24;
+    const auto before = r.probes.size();
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 3 && r.probes.size() == before,
+          "A stable footprint did not reuse its terrain proof independently of the clock");
+    r.present(r.submissions.back());
+    check(r.count(tel::Action::Presented) == 1, "A complete warning without the countdown could not earn a proof");
+
+    ++r.collision_revision;
+    r.sample = [](float, float, float, float&) { return HAILSTONE_WORLD_MISSING; };
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 3 && r.probes.size() > before, "Changed terrain reused an invalidated mesh");
+    r.sample = [](float, float, float probe, float& z) { z = 2; return probe >= 2 ? HAILSTONE_WORLD_RESOLVED : HAILSTONE_WORLD_MISSING; };
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 4 && near(r.submissions.back().vertices[0].position[2], 2.035f),
+          "The warning failed to return on restored current terrain");
+
+    bytes[5] = std::byte{static_cast<unsigned char>(tel::Action::Update)};
+    put(bytes, 24, 4); floating(bytes, 56, 20);
+    r.incoming(bytes); r.now += 16; r.frame();
+    check(r.submissions.size() == 5 && near(r.submissions.back().vertices[0].position[1], 20),
+          "A same-ID update reused the old footprint");
+    r.present(r.submissions.back());
+    check(r.count(tel::Action::Presented) == 2 && r.sent.back().revision == 4,
+          "An updated footprint lost its exact revision proof");
+}
+
+void regional_cache_preserves_static_footprints() {
+    Rig r;
+    r.caps |= HAILSTONE_WORLD_SURFACE_CACHE_REVISION;
+    r.api.world_surface_cache_revision = [](void* context, std::uint64_t frame, std::uint32_t epoch,
+                                           float min_x, float min_y, float max_x, float max_y, std::uint32_t* out) -> int {
+        auto& rig = *static_cast<Rig*>(context);
+        check(out && frame == rig.serial && epoch == rig.epoch, "Regional query lost exact scene identity");
+        check(min_x < 26 && min_y < 4 && max_x > 42 && max_y > 20,
+              "Regional bounds did not cover the expanded floor proof in SDK axes");
+        if (!rig.regional_cache_valid) return HAILSTONE_WORLD_DEFERRED;
+        *out = rig.regional_revision;
+        return HAILSTONE_WORLD_RESOLVED;
+    };
+    r.connect(); r.incoming(circle()); r.now += 16; r.frame();
+    check(r.submissions.size() == 1, "Static footprint could not be built");
+    const auto before = r.probes.size();
+    r.remaining_queries = 0; ++r.collision_revision;
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 2 && r.probes.size() == before,
+          "Unrelated animation invalidated an unchanged regional terrain certificate");
+    ++r.regional_revision; ++r.collision_revision;
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 2, "Regional terrain change reused stale geometry");
+
+    r.remaining_queries = 262144;
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 3, "Stable changed terrain did not rebuild the footprint");
+    r.regional_cache_valid = false; ++r.collision_revision; r.remaining_queries = 0;
+    r.now += 16; r.frame();
+    check(r.submissions.size() == 3, "Region no longer proved static retained a cached warning");
+}
+
+void resume_legacy_surface_work_across_frames() {
+    Rig r; r.connect();
+    std::uint64_t native_frame = 0;
+    unsigned completed_this_frame = 0;
+    std::set<std::array<float, 9>> completed_patches;
+    r.patch_sample = [&](const HailstoneWorldSurfacePatch& query, HailstoneWorldSurfacePatchResult&) {
+        float lo = query.vertices[0], hi = lo;
+        for (std::size_t i = 1; i < 3; ++i) {
+            lo = std::min(lo, query.vertices[i * 3]); hi = std::max(hi, query.vertices[i * 3]);
+        }
+        // Force per-triangle proofs. A few native calls fit each frame but the
+        // entire warning's proof cannot complete within one frame allowance.
+        if (hi - lo > 10) return HAILSTONE_WORLD_PATCH_DEFERRED;
+        if (native_frame != query.frame) { native_frame = query.frame; completed_this_frame = 0; }
+        if (completed_this_frame == 2) return HAILSTONE_WORLD_PATCH_DEFERRED;
+        ++completed_this_frame;
+        std::array<float, 9> key{};
+        std::copy(std::begin(query.vertices), std::end(query.vertices), key.begin());
+        check(completed_patches.insert(key).second, "Native host repeated a completed surface query during replay");
+        return HAILSTONE_WORLD_PATCH_PLANAR;
+    };
+    r.incoming(circle());
+    r.now += 16; r.frame();
+    check(r.submissions.empty() && completed_patches.size() == 2 && r.count(tel::Action::Presented) == 0,
+          "A partial legacy terrain proof was submitted or acknowledged");
+    for (int i = 0; i < 6 && r.submissions.empty(); ++i) { r.now += 16; r.frame(); }
+    check(r.submissions.size() == 1 && completed_patches.size() > 2,
+          "Partial legacy terrain proof restarted instead of finishing across frames");
+    r.present(r.submissions.back());
+    check(r.count(tel::Action::Presented) == 1, "Completed legacy terrain replay did not qualify for an exact proof");
+}
+
+void cached_warning_preserves_server_pulse() {
+    Rig r; r.connect();
+    auto bytes = circle();
+    bytes[8] |= std::byte{static_cast<unsigned char>(tel::Pulse)};
+    r.incoming(bytes); r.now += 16; r.frame();
+    check(r.submissions.size() == 1, "Pulsing warning did not submit without a countdown");
+    const auto probes = r.probes.size();
+    r.remaining_queries = 0; r.now += 250; r.frame();
+    check(r.submissions.size() == 2 && r.probes.size() == probes, "Pulse animation rebuilt its certified footprint");
+    const auto& first = r.submissions[0].vertices;
+    const auto& second = r.submissions[1].vertices;
+    check(first.size() == second.size() && !near(first[0].color[3], second[0].color[3]),
+          "Server pulse did not vary the cached mesh's opacity");
+    for (std::size_t n = 0; n < first.size(); ++n) {
+        check(std::equal(first[n].position, first[n].position + 3, second[n].position) &&
+              first[n].color[3] >= 128.0f / 255.0f && second[n].color[3] >= 128.0f / 255.0f,
+              "Pulse moved certified geometry or went below the required opacity floor");
+    }
+}
+
+void stationary_clock_reuses_valid_terrain_proofs() {
+    Rig r; r.connect();
+    unsigned patches = 0;
+    r.patch_sample = [&](const auto&, auto&) { ++patches; return HAILSTONE_WORLD_PATCH_PLANAR; };
+    auto bytes = circle();
+    bytes[8] |= std::byte{static_cast<unsigned char>(tel::Countdown)};
+    r.incoming(bytes); r.now += 16; r.frame();
+    check(r.submissions.size() == 2 && patches > 0, "Clock proof fixture did not emit both layers");
+    const auto native_patches = patches;
+    const auto probes = r.probes.size();
+    r.remaining_queries = 0; r.now += 20; r.frame();
+    check(r.submissions.size() == 4 && patches == native_patches && r.probes.size() == probes,
+          "A stationary clock could not reuse the certified whole patch at a later countdown phase");
+    ++r.collision_revision; r.now += 16; r.frame();
+    check(r.submissions.size() == 4, "A stationary clock survived an invalidated terrain certificate");
 }
 void modern_shared_floor_allowance() {
     Rig r; r.connect();
@@ -457,7 +660,12 @@ void invalid_scene_and_clock_guards() {
 int main() {
     try {
         actual_adapter_flow_and_axes(); absent_services_and_routing(); receipt_failure_paths(); lifecycle_and_runtime_capability();
-        drawn_anchor_boundary(); draping_survives_appearance_choices(); malformed_patch_results(); bounded_fair_multiple_markers(); modern_shared_floor_allowance(); invalid_scene_and_clock_guards();
+        drawn_anchor_boundary(); draping_survives_appearance_choices(); malformed_patch_results(); near_collinear_host_region();
+        sustained_warning_under_submission_pressure(); bounded_surface_work_keeps_later_warnings_visible();
+        footprint_cache_invalidation_and_decoration_receipts(); regional_cache_preserves_static_footprints();
+        resume_legacy_surface_work_across_frames(); cached_warning_preserves_server_pulse();
+        stationary_clock_reuses_valid_terrain_proofs();
+        modern_shared_floor_allowance(); invalid_scene_and_clock_guards();
         std::cout << "Telegraph adapter: " << checks << " checks passed\n"; return 0;
     } catch (const std::exception& error) {
         std::cerr << "Telegraph adapter after " << checks << " checks: " << error.what() << '\n'; return 1;

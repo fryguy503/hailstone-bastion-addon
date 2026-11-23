@@ -14,7 +14,9 @@ enum HailstoneWorldCapability {
     HAILSTONE_WORLD_TERRAIN = 2u,
     HAILSTONE_WORLD_DRAWN_ANCHORS = 4u,
     HAILSTONE_WORLD_PRESENT_RECEIPTS = 8u,
-    HAILSTONE_WORLD_SURFACE_PATCH = 16u
+    HAILSTONE_WORLD_SURFACE_PATCH = 16u,
+    HAILSTONE_WORLD_BOUNDED_SURFACE_PATCH = 32u,
+    HAILSTONE_WORLD_SURFACE_CACHE_REVISION = 64u
 };
 enum HailstoneWorldQueryResult {
     HAILSTONE_WORLD_DEFERRED = 0,  /* unavailable scene geometry, stale frame, or exhausted query budget */

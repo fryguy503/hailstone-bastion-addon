@@ -694,7 +694,8 @@ typedef struct HailstoneMapPolicy {
     /* Zero is stock. HAILSTONE_NPC_FIND_SERVER_ONLY limits NPC Find to the server's advertised list and path.
      * DISABLE_NPC_FIND takes precedence. Only write this field when the caller supplies the 96-byte record. */
     uint64_t npc_find_mode;
-    /* Opt in to visual guides for an explicitly selected current target or Bazaar trader. */
+    /* HAILSTONE_MAP_ACTOR_GUIDES allows visual paths to the current target and local Bazaar traders.
+     * It grants no discovery or movement. Only write when the caller supplies the 104-byte record. */
     uint64_t actor_guides;
 } HailstoneMapPolicy;
 
@@ -1170,6 +1171,23 @@ typedef struct PluginHostApi {
      * permission loss or unload. Check HAILSTONE_HOST_HAS before use on older ABI 3 hosts. */
     int (*set_ui_contribution)(void* host, const HailstoneUiContribution* entry);
     int (*remove_ui_contribution)(void* host, const char* id);
+    /* Every spell named `name` (HAILSTONE_CAP_READ; case-insensitive, lowest id first), laid out as
+     * get_spells_data_bulk's: an int32_t count, then one record per spell of that name, as many whole records as fit.
+     * Bytes written; 0 without `read` or when out_size cannot hold the count. The count alone (0) with no game
+     * connection, a NULL name or one no spell has. Added later in ABI 3: test
+     * HAILSTONE_HOST_HAS(host, get_spells_by_name_data_bulk) first. */
+    int32_t (*get_spells_by_name_data_bulk)(void* host, const char* name, unsigned char* out, int32_t out_size);
+    /* The plugin's own bulk buffer: HS_BULK_BUFFER_SIZE (2 MiB) bytes to pass the *_data_bulk reads as `out`, so it
+     * need not allocate its own. Each plugin has its own, made at its first acquire and freed when it unloads.
+     * acquire returns it and sets *size (size may be NULL), or returns NULL with *size 0 when called outside the
+     * plugin's own callbacks (from another thread among them). The pointer may be used from acquire until
+     * release_bulk_buffer, the end of the callback it was acquired in, or the plugin's unload, whichever comes first.
+     * Asked again meanwhile, from a callback of the plugin's nested inside that one too, it returns the same buffer,
+     * and a release in such a nested callback does nothing: the outer callback keeps it (the nested one's reads still
+     * overwrite what the outer read). Never zeroed: it holds whatever the plugin last left. No permission needed (the
+     * reads still need theirs). Added later in ABI 3: test HAILSTONE_HOST_HAS(host, acquire_bulk_buffer) first. */
+    unsigned char* (*acquire_bulk_buffer)(void* host, int32_t* size);
+    void (*release_bulk_buffer)(void* host);
     /* READ: current received game popup, 1 available, 0 none/expired. Initialize out->size. */
     int (*get_large_dialog)(void* host, HailstoneLargeDialog* out);
     /* ACTIONS: answer this exact current popup once: button 0 OK, 1 Yes, 2 No, 3 close. Returns 1 consumed (and
@@ -1178,6 +1196,19 @@ typedef struct PluginHostApi {
      * That hint only classifies an actual subsequent camp disconnect; it never sends Logout, advances a timer or
      * asserts server acceptance. A rejected offer keeps the ordinary camp running. Other flags are refused. */
     int (*answer_large_dialog)(void* host, uint64_t token, uint64_t camp_token, int32_t button, uint32_t flags);
+    /* UI + EXTEND. Same proof and frame lifetime as world_surface_patch. Supply a non-NULL work counter
+     * containing the maximum work this query may spend. It returns the number of shared frame work units
+     * actually spent, including the query itself, even on DEFERRED. Zero work requests no query.
+     * Check HAILSTONE_HOST_HAS and HAILSTONE_WORLD_BOUNDED_SURFACE_PATCH before use. */
+    int (*world_surface_patch_bounded)(void* host, const HailstoneWorldSurfacePatch* query,
+                                       HailstoneWorldSurfacePatchResult* out, uint32_t* work);
+    /* UI + EXTEND. For terrain-only reuse, query the same enclosing scene XY box in the source frame and
+     * each reuse frame. It must cover every floor sample and surface patch that supports the saved geometry.
+     * RESOLVED means current animated visuals cannot overlap the box. Reuse requires RESOLVED and the same
+     * epoch and revision (zero is valid). DEFERRED leaves revision unchanged. Does not certify anchors or
+     * submit geometry. Check HAILSTONE_HOST_HAS and HAILSTONE_WORLD_SURFACE_CACHE_REVISION. */
+    int (*world_surface_cache_revision)(void* host, uint64_t frame, uint32_t epoch,
+                                        float min_x, float min_y, float max_x, float max_y, uint32_t* revision);
 } PluginHostApi;
 /* What use_ability and ability_state take: the kinds of ability the Ability Book lists. The values are stable. */
 enum HS_AbilityKinds {
@@ -1208,6 +1239,7 @@ enum HS_AbilityKinds {
 #define HAILSTONE_ID_NAME_RECORD_SIZE 8
 #define HAILSTONE_ABILITY_RECORD_SIZE 32 /* get_ability_data_bulk's fixed part, before the name */
 #define HS_BULK_LIST_HEADER_SIZE 8 /* HS_Bulk_ListHeader */
+#define HS_BULK_BUFFER_SIZE 2097152 /* acquire_bulk_buffer's buffer, one per plugin: 2 MiB */
 /* raid_action's actions. */
 #define HAILSTONE_RAID_MOVE 1u /* move a member to another group, or out of every group */
 /* Whether this client's host table has `field` (one added after the plugin's ABI) and it is set. */

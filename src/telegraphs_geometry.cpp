@@ -14,6 +14,7 @@ namespace bastion::telegraphs {
 namespace {
 constexpr float pi = 3.14159265358979323846f, tau = 2 * pi;
 constexpr float surface_offset = 0.035f;
+static_assert(kSurfaceProofTolerance < surface_offset);
 constexpr unsigned maximum_depth = 18;
 struct XY { float x, y; };
 XY operator+(XY a, XY b) { return {a.x + b.x, a.y + b.y}; }
@@ -70,6 +71,9 @@ public:
             distance(marker_.local_expire, marker_.local_impact) != distance(p_.expire_ms, p_.impact_ms)) return finish(GeometryStatus::Invalid);
         if (!reached(now_, marker_.local_start)) return finish(GeometryStatus::NotStarted);
         if (reached(now_, marker_.local_expire)) return finish(GeometryStatus::Expired);
+        result_.covers_warning = options_.layer != GeometryLayer::Countdown;
+        if (!result_.covers_warning && (!(p_.flags & Countdown) || reached(now_, marker_.local_impact)))
+            return finish(GeometryStatus::NoDecoration);
         required_ = (p_.flags & RequiredDisplay) != 0;
         clamp_ = (p_.flags & ClampToTerrain) != 0;
         origin_ = {p_.x, p_.y}; reference_ = p_.z;
@@ -99,32 +103,16 @@ public:
             std::max(16.0f, marker_radius(p_) * 1.10f / (required_ ? 2.0f : 8.0f));
         if(clamp_&&options_.bounded_draping) certify_flat_bounds();
         auto color = palette();
-        if (p_.flags & Pulse) {
+        if (options_.layer == GeometryLayer::Complete && (p_.flags & Pulse)) {
             const auto remaining = std::max(0, distance(marker_.local_impact, now_));
             const std::uint32_t period = options_.enhanced_style && remaining <= 2000 ? 500u : 900u;
             const auto phase = options_.enhanced_style ? static_cast<std::uint32_t>(remaining) : now_;
             color = readable(opacity(color, .88f + .12f * std::sin(tau * static_cast<float>(phase % period) / static_cast<float>(period))));
         }
-        const bool fill = (p_.flags & Filled) || !(p_.flags & (Filled | Outline));
-        const bool edge = (p_.flags & Outline) || !(p_.flags & (Filled | Outline));
-        const auto style = p_.style == Style::Auto
-            ? ((p_.shape == Shape::Stack || p_.shape == Shape::Target) ? Style::Ring : Style::Solid) : p_.style;
-        switch (p_.shape) {
-        case Shape::Donut: annulus(p_.p2, p_.p1, 0, tau, sectors(p_, p_.p1), color, style, fill, edge); break;
-        case Shape::Cone: {
-            const float half = p_.p2 * pi / 360;
-            annulus(p_.p3, p_.p1, -half, half, sectors(p_, p_.p1), color, style, fill, edge); break;
-        }
-        case Shape::Rectangle: case Shape::Line: case Shape::Cross:
-            quad(-p_.p2 * .5f, p_.p2 * .5f, p_.p3 - p_.p1 * .5f, p_.p3 + p_.p1 * .5f, color, style, fill, edge);
-            if (p_.shape == Shape::Cross)
-                quad(-p_.p1 * .5f, p_.p1 * .5f, p_.p3 - p_.p2 * .5f, p_.p3 + p_.p2 * .5f, color, style, fill, edge);
-            break;
-        default: annulus(0, p_.p1, 0, tau, sectors(p_, p_.p1), color, style, fill, edge); break;
-        }
-        glyphs(marker_radius(p_), color);
-        countdown(marker_radius(p_), color);
-        if (result_.complete() && result_.vertices.empty()) fail(GeometryStatus::Invalid);
+        if (result_.covers_warning) footprint(color);
+        if (options_.layer != GeometryLayer::Footprint) countdown(marker_radius(p_), color);
+        if (result_.complete() && result_.vertices.empty())
+            fail(result_.covers_warning ? GeometryStatus::Invalid : GeometryStatus::NoDecoration);
         if (result_.complete()) {
             budget_.vertices_used += result_.vertices.size();
             result_.terrain_conformed = clamp_;
@@ -132,6 +120,27 @@ public:
         return finish(result_.status);
     }
 private:
+    void footprint(std::uint32_t color) {
+        const bool fill = (p_.flags & Filled) || !(p_.flags & (Filled | Outline));
+        const bool edge = (p_.flags & Outline) || !(p_.flags & (Filled | Outline));
+        const auto style = p_.style == Style::Auto
+            ? ((p_.shape == Shape::Stack || p_.shape == Shape::Target) ? Style::Ring : Style::Solid) : p_.style;
+        const auto segment_count = sectors(p_, p_.p1);
+        switch (p_.shape) {
+        case Shape::Donut: annulus(p_.p2, p_.p1, 0, tau, segment_count, color, style, fill, edge); break;
+        case Shape::Cone: {
+            const float half = p_.p2 * pi / 360;
+            annulus(p_.p3, p_.p1, -half, half, segment_count, color, style, fill, edge); break;
+        }
+        case Shape::Rectangle: case Shape::Line: case Shape::Cross:
+            quad(-p_.p2 * .5f, p_.p2 * .5f, p_.p3 - p_.p1 * .5f, p_.p3 + p_.p1 * .5f, color, style, fill, edge);
+            if (p_.shape == Shape::Cross)
+                quad(-p_.p1 * .5f, p_.p1 * .5f, p_.p3 - p_.p2 * .5f, p_.p3 + p_.p2 * .5f, color, style, fill, edge);
+            break;
+        default: annulus(0, p_.p1, 0, tau, segment_count, color, style, fill, edge); break;
+        }
+        glyphs(marker_radius(p_), color);
+    }
     static bool finite(float value) { return std::isfinite(value) && std::abs(value) <= 2000000; }
     bool work() {
         if (!result_.complete()) return false;
@@ -510,8 +519,7 @@ private:
     }
     struct FaceProof {
         std::array<TriangleVertex,3> face{};
-        float certified_rise=0,failed_rise=0;
-        unsigned attempts=0;
+        float certified_rise=0;
     };
     bool project_from_proof(TriangleVertex a,TriangleVertex b,TriangleVertex c) {
         for(const auto& proof:face_cache_) {
@@ -542,47 +550,65 @@ private:
         const double wanted=std::ceil(minor_step+extra);
         if(!std::isfinite(wanted)||wanted>128) return;
         const float rise=static_cast<float>(wanted);
-        auto found=std::find_if(face_cache_.begin(),face_cache_.end(),[&](const auto& proof){return same(proof.face);});
-        if(found==face_cache_.end()) {
-            if(face_cache_.size()>=256) return;
-            face_cache_.push_back({face});found=std::prev(face_cache_.end());
-        }
-        if(found->attempts>=4||rise<=found->certified_rise||(found->failed_rise!=0&&rise>=found->failed_rise)) return;
-        ++found->attempts;
+        if (face_cache_.size() >= 256 || std::any_of(face_cache_.begin(), face_cache_.end(), [&](const auto& proof) {
+            return same(proof.face);
+        })) return;
+        // Try this broad shortcut once. Child patches can still prove a
+        // smaller area or a different ceiling when this proof cannot cover it.
+        face_cache_.push_back({face});
         if(!query_allowance()) return;
-        if(queries_.surface_patch(face,rise).status==PatchStatus::Planar) found->certified_rise=std::max(found->certified_rise,rise);
-        else found->failed_rise=found->failed_rise!=0?std::min(found->failed_rise,rise):rise;
+        if (queries_.surface_patch(face, rise).status == PatchStatus::Planar) face_cache_.back().certified_rise = rise;
+    }
+    static std::optional<ClipPoint> rounded_inside(const Polygon& polygon, ClipPoint at, ClipPoint center) {
+        const auto inside = [&](ClipPoint point) {
+            for (std::size_t n = 0; n < polygon.size(); ++n)
+                if (side(polygon[n], polygon[(n + 1) % polygon.size()], point) < 0) return false;
+            return true;
+        };
+        const auto round = [](ClipPoint point) {
+            return ClipPoint{static_cast<float>(point.x), static_cast<float>(point.y)};
+        };
+        const auto point = round(at);
+        if (inside(point)) return point;
+        const float x = static_cast<float>(point.x), y = static_cast<float>(point.y);
+        const float low = -std::numeric_limits<float>::infinity(), high = std::numeric_limits<float>::infinity();
+        const std::array xs{x, std::nextafter(x, low), std::nextafter(x, high)};
+        const std::array ys{y, std::nextafter(y, low), std::nextafter(y, high)};
+        ClipPoint best = point;
+        double nearest = std::numeric_limits<double>::infinity();
+        for (const auto rx : xs) {
+            for (const auto ry : ys) {
+                const double dx = rx - at.x, dy = ry - at.y;
+                const double distance = dx * dx + dy * dy;
+                if (distance < nearest && inside({rx, ry})) { nearest = distance; best = {rx, ry}; }
+            }
+        }
+        if (nearest < std::numeric_limits<double>::infinity()) return best;
+
+        // At very acute corners there may be no adjacent representable point.
+        // Walk toward the polygon interior instead of oscillating across edges.
+        for (double factor = 1e-7; factor < 1; factor *= 2) {
+            const auto candidate = round({at.x + (center.x - at.x) * factor, at.y + (center.y - at.y) * factor});
+            if (inside(candidate)) return candidate;
+        }
+        const auto midpoint = round(center);
+        return inside(midpoint) ? std::optional{midpoint} : std::nullopt;
     }
     void projected_polygon(const Polygon& polygon,const std::array<TriangleVertex,3>& color_plane,
-                           const std::array<TriangleVertex,3>& height_plane,float lift,unsigned depth) {
-        if(polygon.size()<3||polygon_area(polygon)<1e-10) return;
+                           const std::array<TriangleVertex,3>* height_plane,unsigned depth) {
+        if(!result_.complete()||polygon.size()<3||polygon_area(polygon)<1e-10) return;
         std::vector<TriangleVertex> vertices;vertices.reserve(polygon.size());
         ClipPoint center{};for(const auto point:polygon) {center.x+=point.x;center.y+=point.y;}
         center.x/=static_cast<double>(polygon.size());center.y/=static_cast<double>(polygon.size());
         for(const auto at:polygon) {
-            TriangleVertex point{static_cast<float>(at.x),static_cast<float>(at.y),0,0};
-            // A double clip intersection can round one float ULP onto the
-            // opposite side of a vertical boundary. Round inward to this
-            // polygon instead of oscillating between high and low layers.
-            for(unsigned attempt=0;attempt<8;++attempt) {
-                bool inside=true;
-                for(std::size_t n=0;n<polygon.size();++n) {
-                    const auto start=polygon[n],end=polygon[(n+1)%polygon.size()];
-                    const double distance=side(start,end,{point.x,point.y});
-                    if(distance>=0) continue;
-                    inside=false;
-                    const double dx=end.x-start.x,dy=end.y-start.y,squared=dx*dx+dy*dy;
-                    if(squared==0) continue;
-                    const float magnitude=std::max(std::abs(point.x),std::abs(point.y));
-                    const double resolution=std::nextafter(magnitude,std::numeric_limits<float>::infinity())-magnitude;
-                    const double correction=(-distance+resolution*std::sqrt(squared)*2)/squared;
-                    point.x=static_cast<float>(point.x-dy*correction);point.y=static_cast<float>(point.y+dx*correction);
-                }
-                if(inside) break;
-            }
-            const ClipPoint rounded{point.x,point.y};
-            point.z=static_cast<float>(plane_height(height_plane,rounded)+lift);
-            const auto barycentric=weights(color_plane,rounded);
+            const auto rounded = rounded_inside(polygon, at, center);
+            if (!rounded) continue;
+            TriangleVertex point{static_cast<float>(rounded->x),static_cast<float>(rounded->y),0,0};
+            // The remainder has no certified plane. Sample its new vertices
+            // instead of carrying the parent's interpolated height over a step.
+            const double surface = height_plane ? plane_height(*height_plane, *rounded) : floor(xy(point));
+            point.z = static_cast<float>(surface + p_.p5 + surface_offset);
+            const auto barycentric=weights(color_plane,*rounded);
             for(unsigned shift=0;shift<32;shift+=8) {
                 double channel=0;for(std::size_t n=0;n<3;++n) channel+=barycentric[n]*static_cast<double>((color_plane[n].argb>>shift)&255u);
                 point.argb|=static_cast<std::uint32_t>(std::clamp(channel,0.0,255.0))<<shift;
@@ -633,10 +659,10 @@ private:
             const auto start=mask[n],end=mask[(n+1)%mask.size()];
             if((end.x-start.x)*(end.x-start.x)+(end.y-start.y)*(end.y-start.y)<1e-24) continue;
             const auto outside=clip(remaining,[&](ClipPoint at){return -side(start,end,at);});
-            projected_polygon(outside,candidate,candidate,0,depth+1);
+            projected_polygon(outside,candidate,nullptr,depth+1);
             remaining=clip(remaining,[&](ClipPoint at){return side(start,end,at);});
         }
-        projected_polygon(remaining,candidate,face,p_.p5+surface_offset,depth+1);
+        projected_polygon(remaining,candidate,&face,depth+1);
         return result_.complete();
     }
     std::pair<TriangleVertex, TriangleVertex> step_boundary(TriangleVertex a, TriangleVertex b) {
@@ -769,10 +795,10 @@ private:
             const float head = std::min(wing * .9f, len * .46f);
             const float width = head * .65f;
             const XY base = to - along * head;
-            const float stroke = std::clamp(wing * .13f, .18f, .32f) / options_.ribbon_width;
+            const float stroke = std::clamp(wing * .18f, .28f, .50f) / options_.ribbon_width;
             for (unsigned layer = 0; layer < 2; ++layer) {
                 const auto ink = layer ? 0xffedf4fbu : 0xa0142030u;
-                const float scale = stroke * (layer ? 1 : 2.2f);
+                const float scale = stroke * (layer ? 1 : 1.8f);
                 line(from, to - along * (head * .12f), ink, scale);
                 line(base + across * width, to, ink, scale);
                 line(to, base - across * width, ink, scale);
@@ -795,7 +821,7 @@ private:
                         const float a = static_cast<float>(side) * tau / 16, b = static_cast<float>(side + 1) * tau / 16;
                         line(at + XY{std::sin(a), std::cos(a)} * radius,
                              at + XY{std::sin(b), std::cos(b)} * radius,
-                             layer ? 0xffedf4fbu : 0xa0142030u, (layer ? .18f : .40f) / options_.ribbon_width);
+                             layer ? 0xffedf4fbu : 0xa0142030u, (layer ? .28f : .52f) / options_.ribbon_width);
                     }
                 }
             }
@@ -823,7 +849,7 @@ private:
         const float height = width * .48f;
         for (unsigned layer = 0; layer < 2 && result_.complete(); ++layer) {
             const auto ink = layer ? 0xffedf4fbu : 0xa0142030u;
-            const float stroke = (layer ? .18f : .40f) / options_.ribbon_width;
+            const float stroke = (layer ? .28f : .52f) / options_.ribbon_width;
             for (int lid = -1; lid <= 1; lid += 2) {
                 for (unsigned i = 0; i < 16 && result_.complete(); ++i) {
                     const float a = static_cast<float>(i) / 16, b = static_cast<float>(i + 1) / 16;
@@ -890,14 +916,14 @@ private:
         if (options_.enhanced_style) {
             // A small central clock communicates timing without adding another
             // apparent hazard boundary outside the authoritative footprint.
-            const int count = 40;
+            const int count = 24;
             const float radius = std::clamp(r * .17f, .8f, 2.3f);
             const auto polar = [&](float a) { return XY{std::sin(a) * radius, std::cos(a) * radius}; };
             for (int i = 0; i < count && result_.complete(); ++i) {
                 const float a = tau * static_cast<float>(i) / static_cast<float>(count);
                 const float b = tau * static_cast<float>(i + 1) / static_cast<float>(count);
-                line(polar(a), polar(b), 0xa0142030u, .42f / options_.ribbon_width);
-                line(polar(a), polar(b), 0x906c8196u, .14f / options_.ribbon_width);
+                line(polar(a), polar(b), 0xcc142030u, .65f / options_.ribbon_width);
+                line(polar(a), polar(b), 0xa06c8196u, .24f / options_.ribbon_width);
             }
             // The final segment ends at the exact impact fraction instead of
             // stepping between coarse sectors. All vertices still sample terrain.
@@ -906,7 +932,7 @@ private:
                 const float a = tau * static_cast<float>(i) / static_cast<float>(count);
                 if (a >= end) break;
                 const float b = std::min(end, tau * static_cast<float>(i + 1) / static_cast<float>(count));
-                line(polar(a), polar(b), 0xffedf4fbu, .23f / options_.ribbon_width);
+                line(polar(a), polar(b), 0xffedf4fbu, .43f / options_.ribbon_width);
             }
             return;
         }

@@ -96,7 +96,8 @@ bool Adapter::test(std::string_view arguments) {
     report("Local telegraph preview: " + std::to_string(local_.size()) + " markers for 12 seconds.");
     return !local_.empty();
 }
-void Adapter::draw_local(const HailstoneWorldFrame& frame, std::uint32_t now, GeometryQueries& queries, GeometryBudget& budget) {
+void Adapter::draw_local(const HailstoneWorldFrame& frame, std::uint32_t now, GeometryQueries& queries,
+                         GeometryBudget& budget, std::size_t remaining_batches) {
     if (!local_.empty()) {
         HailstonePlayer player{}; player.size = sizeof(player); HailstoneSpawn actor{}; actor.size = sizeof(actor);
         if (!HAILSTONE_HOST_HAS(host_,get_player) || !HAILSTONE_HOST_HAS(host_,get_spawn) ||
@@ -107,7 +108,9 @@ void Adapter::draw_local(const HailstoneWorldFrame& frame, std::uint32_t now, Ge
     local_submitted_ = 0;
     if (!preferences_.get("enabled")) return;
     for (const auto& marker : local_) {
+        if (local_submitted_ >= remaining_batches) break;
         auto current = marker; current.tag.epoch = frame.epoch;
+        const auto drawn_vertices = budget.vertices_used;
         auto geometry = build_geometry(current,now,queries,budget,geometry_options());
         if (!geometry.complete()) continue;
         std::vector<HailstoneWorldVertex> vertices;
@@ -121,12 +124,8 @@ void Adapter::draw_local(const HailstoneWorldFrame& frame, std::uint32_t now, Ge
             out.color[3] = static_cast<float>(vertex.argb >> 24) / 255;
             vertices.push_back(out);
         }
-        if (++next_tag_ == 0) ++next_tag_;
-        HailstoneWorldSubmission submission{}; submission.size = sizeof(submission);
-        submission.epoch = frame.epoch; submission.frame = frame.frame; submission.tag = next_tag_;
-        submission.revision = marker.tag.incarnation; submission.primitive = HAILSTONE_WORLD_TRIANGLES;
-        submission.vertices = vertices.data(); submission.vertex_count = vertices.size();
-        if (host_->world_submit(host_->host,&submission)) ++local_submitted_;
+        if (submit(frame, marker.tag.incarnation, vertices)) ++local_submitted_;
+        else budget.vertices_used = drawn_vertices;
     }
 }
 bool Adapter::command(std::string_view arguments) {
@@ -152,6 +151,8 @@ bool Adapter::command(std::string_view arguments) {
     if (operation.empty() || operation == "status") {
         report("Telegraphs: " + std::string(session_.ready() ? "server ready" : "waiting for server/renderer") +
             "; active " + std::to_string(session_.active_count()) + "; local previews " + std::to_string(local_.size()) +
+            "; cached footprints drawn " + std::to_string(reused_footprints_) +
+            "; required footprints deferred " + std::to_string(deferred_warning_footprints_) +
             "; opacity " + std::to_string(preferences_.get("opacity")) + "%."); return true;
     }
     if (operation == "test") {

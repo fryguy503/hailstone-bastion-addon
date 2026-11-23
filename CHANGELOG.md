@@ -1,5 +1,12 @@
 # Changes
 
+## 0.1.0-preview.8
+
+- Keep verified encounter warning footprints visible while other markers use the terrain budget.
+- Separate impact clocks from the warning footprint and make the clock strokes easier to see.
+- Resume interrupted terrain work on stationary markers. Invalidate cached geometry when its marker or supporting surfaces change.
+- Add telegraph status counts for reused and deferred required warnings. Use bounded terrain work and regional cache validation when supported by Hailstone.
+
 ## 0.1.0-preview.7
 
 - Restore Find and server paths for NPCs that Bastion marks findable on compatible Hailstone clients.
