@@ -52,8 +52,9 @@ ui.window("Bastion Pet Inventory",function()
   local visible,open=R.begin("Bastion Pet Inventory",1050,720);BASTION_UI.pet_inventory=open
   if not open then p.pet_inventory("close");review=nil end
   if visible then
-    C.header("Pet Equipment",s.pet_name~=""and s.pet_name or"No pet",s.pending and"Updating"or(s.casting and"Casting"or(s.locked and"Removal cooldown"or"Ready")))
-    if s.charmed then C.note("Equipment changes are unavailable for charmed pets.","warn")end
+    C.header("Pet Equipment",s.pet_name~=""and s.pet_name or"No pet",s.pending and"Updating"or
+      (not s.fresh and"Awaiting status"or not s.managed_pet and"Unavailable"or
+       s.casting and"Casting"or s.locked and"Removal cooldown"or"Ready"))
     if s.casting then C.note("Finish casting before changing equipment.","warn")end
     if s.locked then C.gauge("Removal cooldown",nil,math.ceil((s.lock_remaining_ms or 0)/1000).." seconds  |  Equipping remains available","warn",22*R.s)end
     local rows={};for _,v in ipairs(s.slots or {})do rows[tonumber(v.slot)]=v end

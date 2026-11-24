@@ -21,8 +21,9 @@ void Adapter::clear_pet() {
     status_ = {};
     status_known_ = false;
     pending_ = false;
+    refresh_requested_ = false;
     attempts_ = 0;
-    next_poll_ = 0;
+    next_poll_ = last_refresh_ = 0;
     revision_ = services::token();
 }
 void Adapter::retire() {
@@ -93,15 +94,17 @@ bool Adapter::synchronize() {
     }
     return true;
 }
-bool Adapter::fresh() const { return status_known_ && now_ >= received_at_ && now_ - received_at_ < 10000; }
+bool Adapter::fresh() const {
+    return status_known_ && !refresh_requested_ && now_ >= received_at_ && now_ - received_at_ < 10000;
+}
 bool Adapter::known(std::uint32_t slot) const { return supported(slot) && (known_slots_ & (1u << slot)); }
 bool Adapter::can_equip(std::uint32_t slot) const {
-    return context_ && pet_ && pet_incarnation_ && fresh() && !pending_ && known(slot) && (status_.flags & 1u) &&
-           !(status_.flags & (4u | 8u));
+    return context_ && pet_ && pet_incarnation_ && fresh() && !pending_ && known(slot) &&
+           (status_.flags & ManagedPet) && !(status_.flags & Casting);
 }
 bool Adapter::can_remove(std::uint32_t slot) const {
-    return can_equip(slot) && !(status_.flags & 2u) && status_.ownership_known && (status_.managed & (1u << slot)) &&
-           items_.contains(slot) && identity(items_.at(slot).value);
+    return can_equip(slot) && !(status_.flags & Locked) && status_.ownership_known &&
+           (status_.managed & (1u << slot)) && items_.contains(slot) && identity(items_.at(slot).value);
 }
 std::uint32_t Adapter::lock_remaining() const {
     if (!status_known_ || now_ < received_at_)
@@ -132,9 +135,15 @@ void Adapter::pulse() {
         const auto delay = std::min<std::uint64_t>(30000, UINT64_C(2500) << std::min(attempts_, 3u));
         next_poll_ = now_ > UINT64_MAX - delay ? UINT64_MAX : now_ + delay;
     }
-    if (shown_ && !pending_ && now_ >= next_poll_ && attempts_ < 5) {
+    if (shown_ && !pending_ && now_ >= next_poll_ && attempts_ < 5 && (!sent_ || now_ - sent_at_ >= 1100)) {
         next_poll_ = now_ > UINT64_MAX - 5000 ? UINT64_MAX : now_ + 5000;
-        send(status_known_ ? Action::Status : Action::Refresh);
+        const bool missing_items = status_.ownership_known && (status_.occupied & ~known_slots_) &&
+                                   now_ - last_refresh_ >= 10000;
+        // A regular NPC hand-in can replace an item without changing either status mask.
+        const bool charm_refresh_due = (status_.flags & ManagedPet) && (status_.flags & Charmed) &&
+                                       now_ - last_refresh_ >= 30000;
+        const bool full_refresh = refresh_requested_ || !status_known_ || missing_items || charm_refresh_due;
+        send(full_refresh ? Action::Refresh : Action::Status);
     }
 }
 bool Adapter::send(Action action, std::uint32_t slot, std::uint32_t count, std::uint64_t expected_revision) {
@@ -149,9 +158,9 @@ bool Adapter::send(Action action, std::uint32_t slot, std::uint32_t count, std::
         items_.clear();
         known_slots_ = 0;
         status_known_ = false;
-        revision_ = services::token();
+        refresh_requested_ = false;
+        last_refresh_ = now_;
     }
-    action_ = action;
     pending_ = sent_ = true;
     sent_at_ = now_;
     ++attempts_;
@@ -175,8 +184,12 @@ bool Adapter::send(Action action, std::uint32_t slot, std::uint32_t count, std::
     return admitted;
 }
 bool Adapter::refresh() {
+    if (!synchronize())
+        return false;
     attempts_ = 0;
-    return send(Action::Refresh);
+    refresh_requested_ = true;
+    next_poll_ = now_;
+    return pending_ || (sent_ && now_ - sent_at_ < 1100) || send(Action::Refresh);
 }
 bool Adapter::equip(std::uint64_t revision, std::uint32_t slot, std::uint32_t item, std::string_view serial,
                     std::uint32_t instance, std::uint32_t quantity) {
@@ -220,18 +233,31 @@ bool Adapter::packet(std::uint16_t opcode, const void *bytes, std::size_t size) 
         return private_packet;
     if (private_packet) {
         const auto value = decode({static_cast<const std::byte *>(bytes), size});
-        if (!value || ((value->flags & 1u) && (!pet_ || !pet_incarnation_)))
+        if (!value || ((value->flags & ManagedPet) && (!pet_ || !pet_incarnation_)))
             return true;
-        const bool changed = !status_known_ || status_ != *value;
+        bool changed = !status_known_ || status_ != *value;
         status_ = *value;
         status_known_ = true;
         received_at_ = now_;
         pending_ = false;
         attempts_ = 0;
-        next_poll_ = now_ > UINT64_MAX - 5000 ? UINT64_MAX : now_ + 5000;
-        if (!(status_.flags & 1u)) {
+        if (!refresh_requested_)
+            next_poll_ = now_ > UINT64_MAX - 5000 ? UINT64_MAX : now_ + 5000;
+        if (!(status_.flags & ManagedPet)) {
             items_.clear();
             known_slots_ = 0;
+        } else if (status_.ownership_known) {
+            const auto previous_known = known_slots_;
+            for (const auto slot : kSlots) {
+                const auto bit = 1u << slot;
+                if (!(status_.occupied & bit)) {
+                    changed |= items_.erase(slot) != 0;
+                    known_slots_ |= bit;
+                } else if (!items_.contains(slot)) {
+                    known_slots_ &= ~bit;
+                }
+            }
+            changed |= known_slots_ != previous_known;
         }
         if (changed)
             revision_ = services::token();
@@ -280,9 +306,10 @@ bool Adapter::command(std::string_view text) {
         return false;
     if (!synchronize())
         return false;
+    const bool was_shown = shown_;
     shown_ = action.empty() ? !shown_ : true;
     if (!shown_) return true;
-    if (action == "refresh" || !status_known_)
+    if (action == "refresh" || !was_shown || !status_known_)
         refresh();
     return true;
 }
@@ -365,10 +392,10 @@ int Adapter::call(const HailstoneArgs *args, HailstoneOut *out) {
     o.string("message", message);
     o.string("pet_name", status.name);
     o.boolean("status_known", status_known_);
-    o.boolean("managed_pet", (status.flags & 1u) != 0);
-    o.boolean("locked", (status.flags & 2u) != 0);
-    o.boolean("charmed", (status.flags & 4u) != 0);
-    o.boolean("casting", (status.flags & 8u) != 0);
+    o.boolean("managed_pet", (status.flags & ManagedPet) != 0);
+    o.boolean("locked", (status.flags & Locked) != 0);
+    o.boolean("charmed", (status.flags & Charmed) != 0);
+    o.boolean("casting", (status.flags & Casting) != 0);
     o.boolean("ownership_known", status.ownership_known);
     o.number("lock_remaining_ms", remaining);
     if (has_cursor) {

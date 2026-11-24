@@ -46,7 +46,8 @@ struct PetHost : Host {
         };
     }
 };
-Bytes status(unsigned flags = 1, unsigned size = 88) {
+Bytes status(unsigned flags = pi::ManagedPet, unsigned size = 88, unsigned managed = 1u << 13,
+             unsigned occupied = 1u << 13) {
     Bytes b(size);
     put(b, 0, 1);
     put(b, 4, 4);
@@ -55,8 +56,8 @@ Bytes status(unsigned flags = 1, unsigned size = 88) {
         put(b, 12, 10000);
     text(b, 16, "Pet");
     if (size == 88) {
-        put(b, 80, 1u << 13);
-        put(b, 84, 1u << 13);
+        put(b, 80, managed);
+        put(b, 84, occupied);
     }
     return b;
 }
@@ -180,11 +181,95 @@ void adapter() {
     a.shutdown();
     check(!h.functions.contains("pet_inventory"), "UI leaked");
 }
+void charmed_pet() {
+    PetHost h;
+    pi::Adapter a;
+    a.set_host(&h.api);
+    a.peer(true);
+    a.game_state(GAMESTATE_INGAME);
+    const unsigned flags = pi::ManagedPet | pi::Charmed;
+    const auto receive_status = [&](unsigned state, unsigned managed, unsigned occupied) {
+        const auto bytes = status(state, 88, managed, occupied);
+        check(a.packet(pi::kOpcode, bytes.data(), bytes.size()), "pet status was not claimed");
+    };
+    const auto sent = [&](pi::Action expected) {
+        hailstone::ByteReader reader(h.sent.back().bytes);
+        reader.skip(4);
+        return reader.le<std::uint32_t>() == static_cast<std::uint32_t>(expected);
+    };
+    const auto receive_item = [&] {
+        const auto bytes = received_item();
+        check(!a.packet(pi::kItemPacket, bytes.data(), bytes.size()), "pet item was swallowed");
+    };
+    constexpr unsigned primary = 1u << 13;
+    check(a.command("open") && sent(pi::Action::Refresh), "charm inventory did not request a full snapshot");
+    receive_status(flags, 0, 0);
+
+    // A normal hand-in changes the NPC's inventory without sending an item to this window.
+    h.now += 5000;
+    a.pulse();
+    check(sent(pi::Action::Status), "complete inventory did not use lightweight polling");
+    receive_status(flags, 0, primary);
+    h.held = item();
+    check(!a.equip(a.revision(), 13, h.held->id, h.held->serial, h.held->instance_id, 1),
+          "occupied slot with missing details could be overwritten");
+    h.now += 5000;
+    a.pulse();
+    check(sent(pi::Action::Refresh), "status-only hand-in did not trigger a full refresh");
+    receive_status(flags, 0, primary);
+    receive_item();
+    check(a.items().at(13).value.id == 200 && a.inspect(a.revision(), 13), "handed-in item was not inspectable");
+    h.held.reset();
+    check(!a.remove(a.revision(), 13, 200, h.received.serial, h.received.instance_id),
+          "unmanaged hand-in could be retrieved");
+
+    // A replacement can have exactly the same occupied and managed slot masks.
+    for (int poll = 0; poll < 5; ++poll) {
+        h.now += 5000;
+        a.pulse();
+        check(sent(pi::Action::Status), "charm sent needless full snapshots between polls");
+        receive_status(flags, 0, primary);
+    }
+    h.now += 5000;
+    a.pulse();
+    check(sent(pi::Action::Refresh), "unchanged masks prevented periodic charm refresh");
+    receive_status(flags, 0, primary);
+    h.received = item(201);
+    receive_item();
+    check(a.items().at(13).value.id == 201, "same-slot hand-in replacement was not displayed");
+
+    h.now += 1100;
+    h.held = item();
+    receive_status(flags | pi::Locked | pi::Casting, 0, primary);
+    check(!a.equip(a.revision(), 13, 100, h.held->serial, 70, 1), "charm equip bypassed casting");
+    receive_status(flags | pi::Locked, 0, primary);
+    check(a.equip(a.revision(), 13, 100, h.held->serial, 70, 1) && sent(pi::Action::Equip),
+          "charm equip blocked during removal cooldown");
+    h.received = *h.held;
+    receive_item();
+    receive_status(flags | pi::Locked, primary, primary);
+    h.held.reset();
+    h.now += 1100;
+    check(!a.remove(a.revision(), 13, 100, h.received.serial, 70), "charm remove bypassed cooldown");
+    receive_status(flags, primary, primary);
+    check(a.remove(a.revision(), 13, 100, h.received.serial, 70) && sent(pi::Action::Remove),
+          "eligible charm item could not return to cursor");
+    receive_status(flags, 0, 0);
+    check(a.items().empty(), "empty status retained the old item");
+
+    const auto requests = h.sent.size();
+    check(a.command("") && a.command("") && !a.fresh() && h.sent.size() == requests,
+          "reopen reused status or ignored the request throttle");
+    h.now += 1100;
+    a.pulse();
+    check(h.sent.size() == requests + 1 && sent(pi::Action::Refresh), "reopen did not queue a full snapshot");
+}
 } // namespace
 int main() {
     try {
         codec();
         adapter();
+        charmed_pet();
         received_visibility<pi::Adapter>("pet_inventory");
         std::cout << "Pet inventory PASS " << checks << " checks\n";
     } catch (const std::exception &e) {

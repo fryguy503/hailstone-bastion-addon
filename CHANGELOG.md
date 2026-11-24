@@ -1,5 +1,10 @@
 # Changes
 
+## 0.1.0-preview.10
+
+- Allow server-managed dire-charmed pets to equip cursor items and return eligible gear through Pet Inventory.
+- Refresh the window when it opens and resync equipment after ordinary pet hand-ins.
+
 ## 0.1.0-preview.9
 
 - Keep active encounter warnings and server updates across skipped background draws.

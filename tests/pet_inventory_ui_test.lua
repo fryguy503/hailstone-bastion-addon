@@ -4,9 +4,10 @@ local checks=0
 local function check(ok,why)checks=checks+1;if not ok then error(why,2)end end
 for _,pack in ipairs({"modern","gamepad"})do
   local draw,clicks,pick,calls=nil,{},false,{}
+  local labels={}
   local active,visibilityReads,stateReads=true,0,0
   local s={available=true,shown=false,pending=false,fresh=true,revision="18446744073709551614",message="Received",pet_name="Pet",ownership_known=true,
-    locked=false,casting=false,charmed=false,lock_remaining_ms=0,cursor={id="100",name="Cursor",serial="0123456789ABCDEF",instance_id="20",quantity="3"},
+    managed_pet=true,locked=false,casting=false,charmed=true,lock_remaining_ms=0,cursor={id="100",name="Cursor",serial="0123456789ABCDEF",instance_id="20",quantity="3"},
     slots={{slot="13",label="Primary",known=true,occupied=true,name="Weapon",id="200",serial="FEDCBA9876543210",instance_id="30",can_equip=true,can_remove=false}}}
   local p={pet_inventory=function(op,...)
     if op=="visibility"then visibilityReads=visibilityReads+1;return{active=active,shown=s.shown}end
@@ -15,7 +16,7 @@ for _,pack in ipairs({"modern","gamepad"})do
     return s
   end}
   BASTION_UI={};eq={Plugin=function()return p end};ui={Cond={FirstUseEver=1},window=function(_,fn)draw=fn end,
-    SetNextWindowSize=function()end,Begin=function()return true,true end,End=function()end,TextWrapped=function()end,
+    SetNextWindowSize=function()end,Begin=function()return true,true end,End=function()end,TextWrapped=function(value)labels[value]=true end,
     BeginChild=function()return true end,EndChild=function()end,SameLine=function()end,
     Button=function(label)return clicks[label]end,Selectable=function()local result=pick;pick=false;return result end}
   local harness=setup(root,pack,ui,eq,check)
@@ -29,6 +30,7 @@ for _,pack in ipairs({"modern","gamepad"})do
   for _=1,120 do frame()end
   check(visibilityReads==120 and stateReads==0 and #calls==0,"hidden pet inventory requested slots or cursor eligibility")
   BASTION_UI.pet_inventory=true;pick=true;frame();check(#calls==0,"selection action")
+  check(labels.Ready and not labels["Equipment changes are unavailable for charmed pets."],"eligible charm inventory showed a restriction")
   clicks["Inspect item"]=true;frame();check(#calls==1 and calls[1][1]=="inspect"and calls[1][2]==s.revision and calls[1][3]=="13","readonly inspect identity")
   calls={};clicks["Review equip cursor"]=true;frame();check(#calls==0,"review equipped")
   s.cursor.serial="changed";clicks["Yes, change pet equipment"]=true;frame();check(#calls==0,"cursor replacement confirmed")

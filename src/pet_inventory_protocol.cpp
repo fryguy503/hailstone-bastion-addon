@@ -20,7 +20,8 @@ std::optional<Status> decode(std::span<const std::byte> bytes) {
         s.flags = r.le<std::uint32_t>();
         s.remaining_ms = r.le<std::uint32_t>();
         s.name = services::text(r, 64);
-        if ((s.flags & ~15u) || (!(s.flags & 1u) && (s.flags & (2u | 8u))) || (!(s.flags & 2u) && s.remaining_ms))
+        if ((s.flags & ~(ManagedPet | Locked | Charmed | Casting)) ||
+            (!(s.flags & ManagedPet) && (s.flags & (Locked | Casting))) || (!(s.flags & Locked) && s.remaining_ms))
             return std::nullopt;
         if (bytes.size() == 88) {
             s.ownership_known = true;
@@ -30,7 +31,7 @@ std::optional<Status> decode(std::span<const std::byte> bytes) {
             for (auto slot : kSlots)
                 allowed |= 1u << slot;
             if ((s.managed & ~s.occupied) || ((s.managed | s.occupied) & ~allowed) ||
-                (!(s.flags & 1u) && (s.managed || s.occupied)))
+                (!(s.flags & ManagedPet) && (s.managed || s.occupied)))
                 return std::nullopt;
         }
         return s;
