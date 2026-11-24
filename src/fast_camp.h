@@ -26,7 +26,7 @@ public:
     bool active() const { return selected_&&in_game_; }
     bool enabled() const { return settings_.get("enabled")==1; }
     bool armed() const { return armed_; }
-    const std::string& message() const { return message_; }
+    std::string_view message() const;
 private:
     struct Scope {
         std::uint32_t player=0,zone=0,instance=0;

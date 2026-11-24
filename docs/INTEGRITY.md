@@ -10,6 +10,10 @@ server change. The server sends a fresh connection nonce, the addon measures the
 executable and its own loaded binary, and the server checks their SHA256 pair against its approved
 builds. Only the explicit version 3 acknowledgement can display **Accepted** in Settings.
 
+Version 3's existing report format requires SDK ABI 3. The ABI 4 raid-marker build can
+submit the legacy version 2 DLL report used by the current Bastion server. If a server
+offers the optional ABI 3 challenge, the ABI 4 build reports **Unsupported** for that login.
+
 ## Current server: legacy DLL report
 
 On a selected Bastion login, the addon measures its loaded DLL and reports its FNV-1a 63-bit

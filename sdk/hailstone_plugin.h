@@ -54,7 +54,7 @@
 extern "C" {
 #endif
 
-#define HAILSTONE_PLUGIN_ABI 3
+#define HAILSTONE_PLUGIN_ABI 4
 
 #if defined(_WIN32)
 #define HAILSTONE_EXPORT __declspec(dllexport)
@@ -611,7 +611,6 @@ typedef struct HailstonePlayer {
     uint32_t observation_flags; /* HAILSTONE_PLAYER_* flags */
 } HailstonePlayer;
 #define HAILSTONE_PLAYER_PROMPT_SAFE 16u
-#define HAILSTONE_PLAYER_CAMPING 2u /* READ: a current native camp is in progress; clears on cancellation/zone exit */
 
 typedef struct HailstoneSpawn {
     uint32_t size;
@@ -681,7 +680,6 @@ typedef struct HailstoneMapSpawn {
 #define HAILSTONE_MAP_POLICY_HIDE_STOCK_NPCS 2u
 #define HAILSTONE_MAP_POLICY_DISABLE_NPC_FIND 4u
 #define HAILSTONE_NPC_FIND_SERVER_ONLY 1u
-#define HAILSTONE_MAP_ACTOR_GUIDES 1u
 typedef struct HailstoneMapPolicy {
     uint32_t size;
     uint32_t flags;
@@ -694,9 +692,6 @@ typedef struct HailstoneMapPolicy {
     /* Zero is stock. HAILSTONE_NPC_FIND_SERVER_ONLY limits NPC Find to the server's advertised list and path.
      * DISABLE_NPC_FIND takes precedence. Only write this field when the caller supplies the 96-byte record. */
     uint64_t npc_find_mode;
-    /* HAILSTONE_MAP_ACTOR_GUIDES allows visual paths to the current target and local Bazaar traders.
-     * It grants no discovery or movement. Only write when the caller supplies the 104-byte record. */
-    uint64_t actor_guides;
 } HailstoneMapPolicy;
 
 typedef struct HailstoneSpell {
@@ -711,18 +706,6 @@ typedef struct HailstoneSpell {
     int32_t is_skill;
     uint32_t gem_icon;
 } HailstoneSpell;
-
-/* A received game popup, never the native-code consent question. Tokens are host-issued and change for every
- * replacement, even when the server reuses its popup IDs. camp_token is nonzero only for a dialog received during
- * the still-current camp. remaining_ms is UINT32_MAX without a deadline; expired dialogs are unavailable. */
-#define HAILSTONE_LARGE_DIALOG_YES_NO 1u
-#define HAILSTONE_LARGE_DIALOG_CAMPING 2u
-#define HAILSTONE_DIALOG_EXPECT_CAMP_DISCONNECT 1u
-typedef struct HailstoneLargeDialog {
-    uint32_t size, flags;
-    uint64_t token, camp_token;
-    uint32_t popup_id, negative_id, close_id, remaining_ms;
-} HailstoneLargeDialog;
 
 typedef struct HailstoneItem {
     uint32_t size;
@@ -872,6 +855,9 @@ typedef struct HailstoneHooks {
     const char* (*zone_display_name)(uint32_t zone_id, uint32_t instance_id);
     /* UI + EXTEND. Nonzero supplies a validated map policy; zero abstains. */
     int (*map_policy)(HailstoneMapPolicy* out);
+    /* EXTEND. Requests an inclusive spell ID limit above the stock RoF2 range; 0 abstains. The host validates
+     * the spell file before selecting a limit for the next zone stream. Added later in ABI 4. */
+    uint32_t (*spell_id_limit)(void);
 } HailstoneHooks;
 
 
@@ -913,7 +899,9 @@ typedef struct PluginHostApi {
     /* The directory for the plugin's own files (created on demand): writes `out` and returns the length. */
     int (*config_dir)(void* host, char* out, size_t out_size);
     /* The client's Dear ImGui context (ImGui::SetCurrentContext; the plugin must be built with the same Dear ImGui
-     * version), or NULL without HAILSTONE_CAP_UI. */
+     * version), or NULL without HAILSTONE_CAP_UI. Since ABI 4 that is Dear ImGui 1.93.0 (the font and texture rework
+     * of 1.92 changed the context's layout): the client neither calls OnUpdateImGui of a plugin built for an older ABI
+     * nor gives it the context, so rebuild such a plugin against this SDK and that Dear ImGui. */
     void* (*imgui_context)(void* host);
 
     /* ---- ABI 2: server extensions (HAILSTONE_CAP_EXTEND) ---- */
@@ -1188,27 +1176,20 @@ typedef struct PluginHostApi {
      * reads still need theirs). Added later in ABI 3: test HAILSTONE_HOST_HAS(host, acquire_bulk_buffer) first. */
     unsigned char* (*acquire_bulk_buffer)(void* host, int32_t* size);
     void (*release_bulk_buffer)(void* host);
-    /* READ: current received game popup, 1 available, 0 none/expired. Initialize out->size. */
-    int (*get_large_dialog)(void* host, HailstoneLargeDialog* out);
-    /* ACTIONS: answer this exact current popup once: button 0 OK, 1 Yes, 2 No, 3 close. Returns 1 consumed (and
-     * queued when its ID is nonzero), 0 stale, expired, invalid, denied or send refused. With
-     * EXPECT_CAMP_DISCONNECT, also requires active EXTEND, Yes, and the snapshot's nonzero current camp_token.
-     * That hint only classifies an actual subsequent camp disconnect; it never sends Logout, advances a timer or
-     * asserts server acceptance. A rejected offer keeps the ordinary camp running. Other flags are refused. */
-    int (*answer_large_dialog)(void* host, uint64_t token, uint64_t camp_token, int32_t button, uint32_t flags);
-    /* UI + EXTEND. Same proof and frame lifetime as world_surface_patch. Supply a non-NULL work counter
-     * containing the maximum work this query may spend. It returns the number of shared frame work units
-     * actually spent, including the query itself, even on DEFERRED. Zero work requests no query.
-     * Check HAILSTONE_HOST_HAS and HAILSTONE_WORLD_BOUNDED_SURFACE_PATCH before use. */
-    int (*world_surface_patch_bounded)(void* host, const HailstoneWorldSurfacePatch* query,
-                                       HailstoneWorldSurfacePatchResult* out, uint32_t* work);
-    /* UI + EXTEND. For terrain-only reuse, query the same enclosing scene XY box in the source frame and
-     * each reuse frame. It must cover every floor sample and surface patch that supports the saved geometry.
-     * RESOLVED means current animated visuals cannot overlap the box. Reuse requires RESOLVED and the same
-     * epoch and revision (zero is valid). DEFERRED leaves revision unchanged. Does not certify anchors or
-     * submit geometry. Check HAILSTONE_HOST_HAS and HAILSTONE_WORLD_SURFACE_CACHE_REVISION. */
-    int (*world_surface_cache_revision)(void* host, uint64_t frame, uint32_t epoch,
-                                        float min_x, float min_y, float max_x, float max_y, uint32_t* revision);
+    /* READ. The limit selected for ZoneEntry and whether the currently loaded file supports that extension.
+     * Without a compatible request at ZoneEntry, the limit is 45000 and readiness is 0. With no connection or
+     * permission both calls return 0. Before advertising on the wire, check both results. Added later in ABI 4:
+     * check HAILSTONE_HOST_HAS for both fields. */
+    uint32_t (*spell_id_limit)(void* host);
+    int (*spell_data_ready)(void* host);
+    /* UI + EXTEND. Arm a one-shot ground aim for the player. Only one owner can aim at a time.
+     * Start returns 1 when armed. Get requires out->size and returns 1 when it writes the current
+     * status and zone identity. CONFIRMED and CANCELLED are consumed by the owner on the first read.
+     * Cancellation affects only the caller's placement. Check all three entries with HAILSTONE_HOST_HAS
+     * and check HAILSTONE_WORLD_PLACEMENT via world_capabilities while in the world. */
+    int (*world_placement_start)(void* host);
+    int (*world_placement_get)(void* host, HailstoneWorldPlacement* out);
+    void (*world_placement_cancel)(void* host);
 } PluginHostApi;
 /* What use_ability and ability_state take: the kinds of ability the Ability Book lists. The values are stable. */
 enum HS_AbilityKinds {

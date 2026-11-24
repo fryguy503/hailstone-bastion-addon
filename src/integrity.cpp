@@ -138,6 +138,11 @@ void Adapter::challenge(std::uint64_t nonce,std::uint64_t required,std::uint64_t
     if(seen_count_==seen_.size()) {retire(Status::Failed,"Too many integrity challenges in this session.");return;}
     seen_[seen_count_++]=nonce;
     retire(Status::Measuring,"");nonce_=nonce;
+    if constexpr (HAILSTONE_PLUGIN_ABI != native_report_abi) {
+        status_=Status::Unsupported;
+        reason_="This server's native integrity handshake requires an ABI 3 client and add-on.";
+        return;
+    }
     if((required&~features)!=0) {status_=Status::Unsupported;reason_="Bastion requested integrity features unavailable in this addon.";return;}
     if(now>std::numeric_limits<std::uint64_t>::max()-challenge_ttl_ms) {status_=Status::Failed;reason_="The integrity challenge clock is unavailable.";return;}
     deadline_=now+challenge_ttl_ms;

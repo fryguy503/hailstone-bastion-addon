@@ -15,11 +15,12 @@ See [SDK compatibility](sdk/README.md).
 |---|---|
 | Enhanced Citadel follow | Manual start/stop, outside-group player following, configurable distance, movement cancellation, smooth steering/pitch, optional instant mount response. Direct follow does not route around obstacles. |
 | Citadel song twisting | Song-gem queues, one-shot interruptions, hold, resume, timing controls and the `Twist` data object. Quiet messages and non-bard use are character settings; native casting permissions still apply. |
-| Fast camp | `/fastcamp` requests a camp and accepts Bastion's eligible-zone offer. The server remains authoritative; ordinary camping retains its countdown when no offer arrives. |
+| Fast camp | Companion builds with the popup services can use `/fastcamp` to request and accept Bastion's eligible-zone offer. Standard `/camp` uses Hailstone's ordinary countdown. |
 | Corpse visibility | **Settings → Corpses** or `/hidecorpse` uses Hailstone's character preference. The updated client supports **Always hide**, which also hides your own corpse and corpses that appear later. |
 | Right-click merchant selling | **Off by default.** A deliberate inventory right-click while shopping sells the whole stack using Bastion's protocol. Occupied cursor, bags, unrelated slots and invalid merchant contexts retain the host's guarded behavior. |
 | Maps | **Map controls → Bastion filters** selects group members, raid names, NPCs, merchants, other players and corpses. Tracking permissions and Citadel's reduced planar NPC/corpse range apply. On compatible Hailstone clients, Find lists NPCs marked findable by Bastion and requests the server's path. Older clients keep NPC Find disabled. The latest client can also draw a guide to your current target or a selected Bazaar trader. Self, terrain, labels, pins and other-server stock preferences are preserved. Ordinary unrelated players remain unnamed. |
 | Raid bars | Native Lua group cards or class grid, HP/class filters, class colors/roles, known resource bars, pets, targeting, explicit management, Delegate Raid Manager List/Grant/Revoke controls, edit/resize, scrolling and per-character settings. |
+| Raid ground markers | Leaders, managers and main assists can use a movable bar in Modern and Gamepad. Pick a symbol, aim its ground preview and left-click. Right-click or Escape cancels. One marker of each type is shared per raid and drawn in its exact zone and instance. |
 | Faction standings | FAC1 categories, global search, numeric values/progress, retained selection, inspection and TSV export, including `/outputfile faction`. |
 | DZ manager | Saved expeditions, eligibility/expiry, explicit rejoin, and preserved delegate/server command paths. Rejoin does not teleport or renew an instance. |
 | Pet inventory and gear | Eighteen slots, native cursor equip/drop/removal, inspection, ownership/cooldown checks and controller-friendly reviewed actions. Server replies own the inventory. |
@@ -39,6 +40,14 @@ See the [parity review](docs/PARITY.md) for gaps found, the [validation report](
 and the [integrity integration guide](docs/INTEGRITY.md) for DLL allowlist approval and the optional newer server protocol.
 The [performance review](docs/PERFORMANCE.md) records the map-stall fix, hidden-window work,
 measured costs and remaining live acceptance limits.
+
+Preview 11 is an opt-in prerelease for Hailstone 0.7.3-beta or newer. Raid ground markers require
+a Hailstone build that includes the ground placement SDK. The actual raid leader's
+add-on hosts the session and sends snapshots through Bastion's existing Sentinel relay. Manager
+requests use the existing `#raidmanager list` reply for permission. The relay spaces transmissions
+by about three seconds. A late joiner receives the next snapshot. Changing leaders or restarting
+the leader's add-on starts a new session. Main assists edit from the leader's instance, where
+Bastion supplies their current assist role. Viewers need the compatible client and add-on.
 
 ## Useful commands
 

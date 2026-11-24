@@ -1,5 +1,10 @@
 # Changes
 
+## 0.1.0-preview.11
+
+- Add raid ground markers with a movable bar, mouse preview and eight shared marker slots. The raid leader's add-on hosts the session over Bastion's existing relay.
+- Require Hailstone 0.7.3-beta or newer. Ground markers detect the placement SDK at runtime. The ordinary camp countdown is available on builds without the companion popup services.
+
 ## 0.1.0-preview.10
 
 - Allow server-managed dire-charmed pets to equip cursor items and return eligible gear through Pet Inventory.
