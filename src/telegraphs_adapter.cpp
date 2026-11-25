@@ -109,6 +109,7 @@ private:
         }
         HailstoneWorldSurfacePatchResult result{}; result.size = sizeof(result);
         int answer = HAILSTONE_WORLD_PATCH_DEFERRED;
+#ifdef BASTION_SDK_BOUNDED_SURFACE_PATCH
         if ((frame_.capabilities & HAILSTONE_WORLD_BOUNDED_SURFACE_PATCH) &&
             HAILSTONE_HOST_HAS(&host_, world_surface_patch_bounded)) {
             const auto allowance = std::min(remaining_, marker_remaining_);
@@ -118,7 +119,9 @@ private:
             remaining_ -= charged;
             marker_remaining_ -= charged;
             if (work > allowance || (answer != HAILSTONE_WORLD_PATCH_DEFERRED && !work)) return {};
-        } else {
+        } else
+#endif
+        {
             // Older hosts charge internal surface work against their shared frame
             // allowance but cannot expose or limit that work per marker.
             if (!spend_one()) return {};
@@ -433,6 +436,7 @@ void Adapter::draw(const HailstoneWorldFrame& host_frame, std::uint32_t now) {
         (warning ? required : optional).push_back(&marker);
     }
     const auto regional_revision = [&](const std::array<float, 4>& bounds) -> std::optional<std::uint32_t> {
+#ifdef BASTION_SDK_SURFACE_CACHE_REVISION
         if (!(host_frame.capabilities & HAILSTONE_WORLD_SURFACE_CACHE_REVISION) ||
             !HAILSTONE_HOST_HAS(host_, world_surface_cache_revision)) return std::nullopt;
         const auto [min_x, min_y, max_x, max_y] = bounds;
@@ -441,6 +445,10 @@ void Adapter::draw(const HailstoneWorldFrame& host_frame, std::uint32_t now) {
                                                                min_x, min_y, max_x, max_y, &revision);
         if (answer != HAILSTONE_WORLD_RESOLVED) return std::nullopt;
         return revision;
+#else
+        static_cast<void>(bounds);
+        return std::nullopt;
+#endif
     };
     const auto terrain_current = [&](const TerrainStamp& stamp, std::uint64_t incarnation) {
         const auto pose = poses.find(incarnation);

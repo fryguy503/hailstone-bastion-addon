@@ -128,6 +128,84 @@ for _,pack in ipairs({"modern","gamepad"})do
  check(not BASTION_UI.raidbars and fullReads==reads,"Zoning raid settings sampled a full roster")
  state.in_zone=1;BASTION_UI.raidbars=true
  if pack=="gamepad"then h.close=true;h.frame("Bastion Raid Bar Settings");check(not BASTION_UI.raidbars,"Controller B-close failed")end
+
+ local readyReads=0
+ local checkId="18446744073709551612"
+ local ready={available=1,in_raid=1,can_start=1,can_respond=0,phase="idle",check_id="0",remaining_seconds=0,self_status="no_response",members={}}
+ p.readycheck=function(op,...)
+  if op=="state" then readyReads=readyReads+1;return ready end
+  calls[#calls+1]={"readycheck",op,...}
+  return {ok=1}
+ end
+ state.in_raid=1;state.settings.enabled=0
+ BASTION_UI.raid_ready_check=true
+ reads=fullReads;before=#calls
+ h.buttons["Start ready check##raid-ready-start"]=true;h.frame("Bastion Raid Bars")
+ check(readyReads==1 and fullReads==reads and #calls==before+1 and calls[#calls][2]=="start",
+  "Leader could not start from the independent tool with the overlay disabled")
+ check(h.texts["Request sent. Waiting for the server."],"Queued start was not shown as pending")
+ BASTION_UI.raid_ready_check=false
+ ready.phase="active";ready.can_start=0;ready.can_respond=1;ready.check_id=checkId;ready.remaining_seconds=28
+ ready.members={
+  {name="KNOWN ZERO",group=1,status="ready",capability="ready_check"},
+  {name="Off-zone member",group=2,status="no_response",capability="unknown"},
+  {name="Other zone",group=2,status="not_ready",capability="ready_check"},
+  {name="Hidden role",group=3,status="no_response",capability="modern"},
+  {name="Legacy client",group=0,status="legacy",capability="legacy"},
+ }
+ h.buttons["Ready##raid-ready-vote"]=true;h.frame("Bastion Raid Bars")
+ check(readyReads==2 and fullReads==reads and #h.bars==0 and calls[#calls][2]=="respond" and calls[#calls][3]==checkId and calls[#calls][4]=="ready",
+  "Active check did not open independently or the vote lost the server check identity")
+ check(h.texts["Your response: No Response"] and not h.rendered["End check##raid-ready-end"],
+  "An outgoing vote claimed server confirmation or exposed leader controls")
+ check(h.texts["Group 3"] and h.texts["Ungrouped"] and h.texts["Not on modern client"],
+  "Independent window omitted subgroup rows outside the visible overlay")
+ h.time=4.9;h.frame("Bastion Raid Bars")
+ check(h.texts["Request sent. Waiting for the server."],"Pending vote timed out before five seconds")
+ h.time=5;h.frame("Bastion Raid Bars")
+ check(not h.texts["Request sent. Waiting for the server."] and h.texts["No server confirmation yet. You can try again."]
+  and h.rendered["Ready##raid-ready-vote"],"Unacknowledged request did not time out or left voting unavailable")
+ ready.self_status="ready";state.settings.enabled=1;h.hover=true
+ local readsBefore=readyReads
+ h.frame("Bastion Raid Bars")
+ check(readyReads==readsBefore+1 and fullReads==reads+1 and h.readyBadges==2 and #h.bars==3 and h.bars[1].value==0 and h.texts["Ready check"],
+  "Overlay lost HP, duplicated snapshots, or added badges to pets or empty slots")
+ local tooltip=table.concat(h.tooltips,"\n")
+ check(tooltip:find("Ready Check: No Response (client capability unconfirmed)",1,true) and tooltip:find("Ready Check: Ready",1,true),
+  "Two-pack overlay lost capability precision or case-insensitive roster matching")
+ local indexed=dofile("lib/raid_ready_check.lua").results(ready)
+ check(indexed.totals.legacy==1 and indexed.totals.no_response==2 and indexed.groups[2].not_ready==1,
+  "Subgroup totals did not come from the full server roster")
+ check(h.texts["Your response: Ready"] and not h.texts["No server confirmation yet. You can try again."],
+  "Late server-confirmed vote did not clear the retry message")
+ state.settings.group_sort=0;h.frame("Bastion Raid Bars")
+ check(h.readyBadges==2 and h.texts["Group 3"],"Class-priority bars lost ready badges or independent subgroup totals")
+ state.settings.group_sort=1
+ local regular=h.io;h.io={width=540,height=235,uiScale=2};h.contentHeight=25
+ h.frame("Bastion Raid Bars")
+ check(h.rendered["Ready##raid-ready-vote"] and h.rendered["Not Ready##raid-ready-vote"]
+  and not h.childHeights["##raid-ready-report"],"Short high-DPI layout did not prioritize the response buttons")
+ h.io=regular;h.contentHeight=nil
+ ready.available=0;state.in_zone=0;h.frame("Bastion Raid Bars")
+ check(not h.rendered["Ready##raid-ready-vote"] and #h.bars==0,"Zoning left the old check interactive")
+ ready.available=1;state.in_zone=1;state.settings.clickthrough=1
+ local savedRows=state.rows;state.rows={}
+ h.buttons["Not Ready##raid-ready-vote"]=true;h.frame("Bastion Raid Bars")
+ check(#h.bars==0 and calls[#calls][4]=="not_ready","Zoning, clickthrough or hidden rows blocked the independent response")
+ state.rows=savedRows;h.hover=false
+ ready.can_respond=0;ready.remaining_seconds=0;before=#calls
+ h.frame("Bastion Raid Bars")
+ check(not h.rendered["Ready##raid-ready-vote"] and h.texts["Waiting for ready-check results."] and #calls==before,
+  "A locally elapsed check accepted further votes")
+ ready.can_respond=1;ready.remaining_seconds=15
+ h.close=true;h.frame("Bastion Raid Bars");h.frame("Bastion Raid Bars")
+ check(not h.rendered["Not Ready##raid-ready-vote"] and h.readyBadges==2,"Dismissing an active check reopened it or removed its passive badges")
+ ready.can_start=1;ready.check_id="18446744073709551613"
+ h.buttons["End check##raid-ready-end"]=true;h.frame("Bastion Raid Bars")
+ check(calls[#calls][2]=="end" and calls[#calls][3]==ready.check_id,"New check did not reopen or the leader could not end it with clickthrough enabled")
+ ready.phase="ended";ready.can_respond=0;h.frame("Bastion Raid Bars")
+ check(h.texts["Check ended."] and h.texts["Ready results"] and not h.rendered["Ready##raid-ready-vote"],
+  "Authoritative end did not preserve results and retire voting controls")
  h.restore()
 end
 print("Raid rich two-pack UI: "..count.." checks passed")

@@ -1,4 +1,5 @@
 -- The live raid display uses copied host observations. Drawing never targets or polls remote actors.
+local Ready=dofile("lib/raid_ready_check.lua")
 local M={message="",pending=nil}
 local palette={{.12,.56,1},{1,1,.94},{.25,.4,.9},{.13,.7,.3},{.55,.25,.85},{.68,1,.18},{.65,.42,.2},{1,.18,.58},{.86,.08,.24},{1,.55,0},{.7,.2,.7},{1,.2,.2},{.3,.45,1},{0,1,1},{.85,.65,.13},{.65,.3,.3}}
 local function known(row,key)return row[key.."_known"]==1 end
@@ -76,7 +77,7 @@ local function menu(p,state,row)
  end
  ui.EndPopup()
 end
-local function bar(p,state,row,x,y,w,h,scale,pet)
+local function bar(p,state,row,x,y,w,h,scale,pet,readiness)
  ui.SetCursorScreenPos(x,y)
  if row.empty then
   if ui.Button("Empty##raidempty:"..row.group..":"..row.slot,w,h)and M.pending then action(p,state,M.pending.name,1,row.group)end
@@ -97,9 +98,16 @@ local function bar(p,state,row,x,y,w,h,scale,pet)
  end
  local textColor=(state.settings.class_colors==1 and not pet and live(row))and palette[row.class_id or 0]or nil
  if not textColor then textColor=live(row)and {.96,.96,.96}or {.62,.64,.68}end
- local available=w-8*scale;local suffixWidth=ui.CalcTextSize(suffix)
+ local badge=readiness and math.min(16*scale,h-4*scale) or 0
+ local available=w-8*scale-(badge>0 and badge+3*scale or 0);local suffixWidth=ui.CalcTextSize(suffix)
  local caption=suffixWidth>=available and fit(suffix,available)or fit(label,available-suffixWidth)..suffix
  ui.DrawText(x+4*scale,y+math.max(0,(h-14*scale)/2),textColor[1],textColor[2],textColor[3],1,caption,14*scale)
+ if badge>0 then
+  local bx,by=x+w-badge-3*scale,y+(h-badge)/2
+  ui.DrawRectFilled(bx,by,bx+badge,by+badge,.055,.08,.11,.95,2*scale)
+  local padding=badge*.18
+  Ready.mark(bx+padding,by+padding,badge-padding*2,readiness.status)
+ end
  ui.SetCursorScreenPos(x,y)
  local enabled=state.settings.edit~=1 and state.settings.clickable==1 and state.settings.clickthrough~=1
  local button="##raidactor:"..row.spawn_id..":"..row.incarnation
@@ -109,7 +117,8 @@ local function bar(p,state,row,x,y,w,h,scale,pet)
  end
  if enabled then menu(p,state,row)end
  if ui.IsItemHovered()then ui.SetTooltip(label..(pet and " (pet)"or " - group "..(row.group or 0))..
-  (known(row,"health")and ""or "\nNo current health observation").."\nMana/endurance are shown only when received.")end
+  (known(row,"health")and ""or "\nNo current health observation").."\nMana/endurance are shown only when received."..
+  (readiness and "\nReady Check: "..Ready.detail(readiness)or ""))end
 end
 local function rowHeight(row,s,height,scale)
  if row.empty then return height+4*scale end
@@ -117,7 +126,7 @@ local function rowHeight(row,s,height,scale)
  local pets=#(row.pets or {})
  return height+resources+pets*((s.pet_height>0 and s.pet_height or 12)*scale+2*scale)+4*scale
 end
-function M.draw(p,state,scale,set)
+function M.draw(p,state,scale,set,readiness)
  local s=state.settings or {};if state.available~=1 or s.enabled~=1 or #(state.rows or {})==0 then return end
  if s.manage~=1 or s.edit==1 then M.pending=nil end
  if M.pending and M.pending.revision~=state.roster_revision then M.pending=nil;M.message="Raid roster changed; select the member again."end
@@ -127,12 +136,14 @@ function M.draw(p,state,scale,set)
  local height=(s.bar_height>0 and s.bar_height or 28)*scale
  local petWidth=(s.pet_width>0 and s.pet_width*scale or width)
  local cardWidth=math.max(width,petWidth)+12*scale
- local cardHeights={};local lineHeights={}
+ local cardHeights={};local lineHeights={};local cardCounts={}
  for i,card in ipairs(cards)do
-  local size=30*scale;for _,row in ipairs(card.rows)do size=size+rowHeight(row,s,height,scale)end
+  local counts=readiness and readiness.groups[card.group];cardCounts[i]=counts
+  local size=(counts and 44 or 30)*scale;for _,row in ipairs(card.rows)do size=size+rowHeight(row,s,height,scale)end
   cardHeights[i]=size;local line=math.floor((i-1)/columns)+1;lineHeights[line]=math.max(lineHeights[line]or 0,size)
  end
- local contentHeight=0;for _,h in ipairs(lineHeights)do contentHeight=contentHeight+h+6*scale end
+ local summaryHeight=readiness and 20*scale or 0
+ local contentHeight=summaryHeight;for _,h in ipairs(lineHeights)do contentHeight=contentHeight+h+6*scale end
  local io=ui.GetIO();local naturalW=columns*cardWidth+18*scale
  local naturalH=contentHeight+44*scale
  local w=(s.right or 0)>(s.left or 0)and (s.right-s.left)*scale or naturalW
@@ -148,7 +159,12 @@ function M.draw(p,state,scale,set)
  if ui.Begin("Bastion raid bars###bastionraidbars",nil,flags)then
   if naturalW>w or naturalH>h then ui.Text("Raid extends beyond this area; scroll or enlarge in Edit mode.")end
   if M.message~=""then ui.TextWrapped(M.message)end
-  local ox,oy=ui.GetCursorScreenPos();local lineTop={};local offset=0
+  local ox,oy=ui.GetCursorScreenPos();local lineTop={};local offset=summaryHeight
+  if readiness and w>110*scale then
+   local label=readiness.phase=="active" and "Ready check" or "Ready results"
+   ui.DrawText(ox+4*scale,oy+2*scale,.96,.77,.44,1,label,12*scale)
+   Ready.compactCounts(readiness.totals,ox+81*scale,oy+2*scale,math.min(140*scale,w-96*scale),scale)
+  end
   for line,lineHeight in ipairs(lineHeights)do lineTop[line]=offset;offset=offset+lineHeight+6*scale end
   for i,card in ipairs(cards)do
    local col=(i-1)%columns;local line=math.floor((i-1)/columns)+1
@@ -156,9 +172,12 @@ function M.draw(p,state,scale,set)
    ui.DrawRectFilled(bx,by,bx+cardWidth-4*scale,by+cardHeights[i],.06,.07,.09,.65,4*scale)
    ui.SetCursorScreenPos(bx+4*scale,by+4*scale)
    if ui.Button(card.label.."##raidgroup:"..i,width,22*scale)and M.pending and card.group~=nil then action(p,state,M.pending.name,1,card.group)end
-   local yy=by+30*scale
+   local counts=cardCounts[i]
+   if counts then Ready.compactCounts(counts,bx+4*scale,by+28*scale,width,scale)end
+   local yy=by+(counts and 44 or 30)*scale
    for _,row in ipairs(card.rows)do
-    bar(p,state,row,bx+4*scale,yy,width,height,scale,row.pet==1)
+    local member=readiness and not row.empty and row.pet~=1 and row.name and readiness.members[row.name:lower()]
+    bar(p,state,row,bx+4*scale,yy,width,height,scale,row.pet==1,member)
     local resourceY=yy+height
     for _,resource in ipairs({{"mana",{.22,.45,.9}},{"endurance",{.85,.63,.13}}})do
      local key,color=resource[1],resource[2]

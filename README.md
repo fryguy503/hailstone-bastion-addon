@@ -20,6 +20,7 @@ See [SDK compatibility](sdk/README.md).
 | Right-click merchant selling | **Off by default.** A deliberate inventory right-click while shopping sells the whole stack using Bastion's protocol. Occupied cursor, bags, unrelated slots and invalid merchant contexts retain the host's guarded behavior. |
 | Maps | **Map controls → Bastion filters** selects group members, raid names, NPCs, merchants, other players and corpses. Tracking permissions and Citadel's reduced planar NPC/corpse range apply. On compatible Hailstone clients, Find lists NPCs marked findable by Bastion and requests the server's path. Older clients keep NPC Find disabled. The latest client can also draw a guide to your current target or a selected Bazaar trader. Self, terrain, labels, pins and other-server stock preferences are preserved. Ordinary unrelated players remain unnamed. |
 | Raid bars | Native Lua group cards or class grid, HP/class filters, class colors/roles, known resource bars, pets, targeting, explicit management, Delegate Raid Manager List/Grant/Revoke controls, edit/resize, scrolling and per-character settings. |
+| Raid Ready Check | Server-owned 45-second check with a separate response window and live counts by subgroup. Raid Bars show a status beside each player's HP. |
 | Faction standings | FAC1 categories, global search, numeric values/progress, retained selection, inspection and TSV export, including `/outputfile faction`. |
 | DZ manager | Saved expeditions, eligibility/expiry, explicit rejoin, and preserved delegate/server command paths. Rejoin does not teleport or renew an instance. |
 | Pet inventory and gear | Eighteen slots, native cursor equip/drop/removal, inspection, ownership/cooldown checks and controller-friendly reviewed actions. Server replies own the inventory. |
@@ -108,6 +109,12 @@ grant/revoke request for the selected character, including members in another zo
 the Raid window sends no command. The server checks actual raid leadership and reports the result
 in chat; client leadership flags are not treated as proof of permission.
 
+Open **Bastion → Tools → Raids & adventures → Raid Ready Check** to start or end a check as raid leader.
+Members can change their response until the check closes. The response window works with Raid Bars
+disabled or set to clickthrough. The Bastion world and zones must support Ready Check for shared results.
+Only positively identified legacy sessions show **Not on modern client**. An unconfirmed client or
+add-on capability is shown in the **No Response** tooltip.
+
 ## Build and validate
 
 ```
@@ -118,8 +125,8 @@ ctest --test-dir build --output-on-failure
 
 Lua 5.4 enables the two-pack UI regression tests. With GCC/Clang, add `-DBASTION_SANITIZE=ON`
 for address and undefined-behavior checks, or run `tools/test-sanitizers.sh /path/to/sdk`.
-The checked-in SDK is an MIT-licensed snapshot for standalone builds. The DLL uses the current public ABI 3
-entry points defined by `HAILSTONE_PLUGIN`. Optional host services are checked before use.
+The checked-in SDK is an MIT-licensed ABI 3 snapshot for standalone builds. Build against the SDK for
+the Hailstone client that will load the DLL. Optional host services are checked before use.
 See [SDK provenance and compatibility](sdk/README.md).
 The full UI suite also reads Hailstone's native pack helpers. Providing the companion SDK above
 detects them automatically; with the bundled SDK, set `-DHAILSTONE_CLIENT_UI_ROOT=/path/to/hailstone`

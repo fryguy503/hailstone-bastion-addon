@@ -559,6 +559,7 @@ void sustained_warning_under_submission_pressure() {
           "Cancelling the visible warning did not free capacity for another required warning");
 }
 
+#ifdef BASTION_SDK_BOUNDED_SURFACE_PATCH
 void bounded_surface_work_keeps_later_warnings_visible() {
     Rig r;
     r.caps |= HAILSTONE_WORLD_BOUNDED_SURFACE_PATCH;
@@ -588,6 +589,7 @@ void bounded_surface_work_keeps_later_warnings_visible() {
     check(r.submissions.size() == 2 && near(r.submissions[1].vertices[0].position[1], 60),
           "A cached warning depended on terrain query capacity for every presentation");
 }
+#endif
 
 void footprint_cache_invalidation_and_decoration_receipts() {
     Rig r; r.connect();
@@ -625,6 +627,7 @@ void footprint_cache_invalidation_and_decoration_receipts() {
           "An updated footprint lost its exact revision proof");
 }
 
+#ifdef BASTION_SDK_SURFACE_CACHE_REVISION
 void regional_cache_preserves_static_footprints() {
     Rig r;
     r.caps |= HAILSTONE_WORLD_SURFACE_CACHE_REVISION;
@@ -656,6 +659,7 @@ void regional_cache_preserves_static_footprints() {
     r.now += 16; r.frame();
     check(r.submissions.size() == 3, "Region no longer proved static retained a cached warning");
 }
+#endif
 
 void resume_legacy_surface_work_across_frames() {
     Rig r; r.connect();
@@ -778,8 +782,14 @@ int main() {
         actual_adapter_flow_and_axes(); absent_services_and_routing(); receipt_failure_paths(); lifecycle_and_runtime_capability();
         skipped_draws_keep_current_warnings();
         drawn_anchor_boundary(); failed_world_warning_reaches_hud_without_proof(); draping_survives_appearance_choices(); malformed_patch_results(); near_collinear_host_region();
-        sustained_warning_under_submission_pressure(); bounded_surface_work_keeps_later_warnings_visible();
-        footprint_cache_invalidation_and_decoration_receipts(); regional_cache_preserves_static_footprints();
+        sustained_warning_under_submission_pressure();
+#ifdef BASTION_SDK_BOUNDED_SURFACE_PATCH
+        bounded_surface_work_keeps_later_warnings_visible();
+#endif
+        footprint_cache_invalidation_and_decoration_receipts();
+#ifdef BASTION_SDK_SURFACE_CACHE_REVISION
+        regional_cache_preserves_static_footprints();
+#endif
         resume_legacy_surface_work_across_frames(); cached_warning_preserves_server_pulse();
         stationary_clock_reuses_valid_terrain_proofs();
         modern_shared_floor_allowance(); invalid_scene_and_clock_guards();

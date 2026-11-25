@@ -20,6 +20,7 @@ local equipment={
 }
 local adventures={
   {"Raid bars","raidbars","Layout & management"},
+  {"Raid Ready Check","raid_ready_check","Responses by subgroup"},
   {"DZ manager","dz","Saved expeditions"},
   {"Encounter telegraphs","telegraphs","Colors & previews"},
   {"Firefell instance","firefell","Current instance"},
@@ -42,7 +43,9 @@ local function launchers(p,entries)
   local buttonWidth=math.min(width,math.max(150*R.s,labelWidth+20*C.scale()))
   local hints=width>=buttonWidth+hintWidth+12*R.s
   for _,entry in ipairs(entries)do
-    if C.button(entry[1],hints and buttonWidth or width,false,true,math.max(28*R.s,height+10*C.scale()))then p.citadel("open",entry[2])end
+    if C.button(entry[1],hints and buttonWidth or width,false,true,math.max(28*R.s,height+10*C.scale()))then
+      if entry[2]=="raid_ready_check"then BASTION_UI.raid_ready_check=true else p.citadel("open",entry[2])end
+    end
     C.tooltip(entry[3])
     if hints then ui.SameLine();C.note(entry[3],"muted")end
   end
@@ -118,7 +121,7 @@ ui.window("Bastion",function()
   local visible,open=R.begin("Bastion",page==3 and 1100 or 900,height)
   if visible then
     ui.PushStyleVar(ui.StyleVar.ItemSpacing,8*C.scale(),5*C.scale())
-    C.header("BASTION",nil,page==1 and"9 tools"or nil)
+    C.header("BASTION",nil,page==1 and (#character+#equipment+#adventures).." tools"or nil)
     page=C.tabs("bastion-main",{"Tools","Settings","Commands"},page)
     if page==1 then
       if s.panel=="firefell"then firefell(p)end
