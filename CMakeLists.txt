@@ -38,7 +38,7 @@ target_sources(bastion_core PRIVATE src/firefell.cpp src/server_commands.cpp src
   src/home_city_protocol.cpp src/home_city_addon.cpp src/raid_ready_check.cpp
   src/telegraphs_protocol.cpp src/telegraphs_state.cpp src/telegraphs_geometry.cpp src/telegraphs_adapter.cpp src/telegraphs_controls.cpp)
 target_compile_definitions(bastion_core PRIVATE HAILSTONE_HOST)
-# Optional geometry extensions are present in the Preview SDK but not every ABI 3 SDK.
+# The Bastion preview and public Hailstone SDKs expose different optional extensions.
 foreach(extension IN ITEMS BOUNDED_SURFACE_PATCH SURFACE_CACHE_REVISION)
   file(STRINGS "${HAILSTONE_SDK_DIR}/hailstone_world_geometry.h" declaration
     REGEX "^[ \t]*HAILSTONE_WORLD_${extension}[ \t]*=" LIMIT_COUNT 1)
@@ -46,6 +46,14 @@ foreach(extension IN ITEMS BOUNDED_SURFACE_PATCH SURFACE_CACHE_REVISION)
     target_compile_definitions(bastion_core PUBLIC "BASTION_SDK_${extension}")
   endif()
 endforeach()
+file(STRINGS "${HAILSTONE_SDK_DIR}/hailstone_plugin.h" _camp_dialog_api
+  REGEX "\\(\\*(get_large_dialog|answer_large_dialog)\\)")
+file(STRINGS "${HAILSTONE_SDK_DIR}/hailstone_plugin.h" _camping_flag
+  REGEX "^#define HAILSTONE_PLAYER_CAMPING ")
+list(LENGTH _camp_dialog_api _camp_dialog_count)
+if(_camp_dialog_count EQUAL 2 AND _camping_flag)
+  target_compile_definitions(bastion_core PUBLIC BASTION_OPTIONAL_CAMP_DIALOG=1)
+endif()
 set_target_properties(bastion_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(bastion_core PUBLIC src "${HAILSTONE_SDK_DIR}")
 add_library(bastion MODULE src/plugin.cpp)

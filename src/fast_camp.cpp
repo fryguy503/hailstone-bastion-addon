@@ -8,6 +8,15 @@ namespace {
 constexpr std::array<Preference,1> preferences{{{"enabled",0,1,0}}};
 constexpr std::uint32_t action_caps=HAILSTONE_CAP_READ|HAILSTONE_CAP_ACTIONS|HAILSTONE_CAP_EXTEND|HAILSTONE_CAP_PACKETS;
 constexpr std::string_view idle_message="Use /fastcamp for one camp. Ordinary camping is unchanged by default.";
+constexpr std::string_view popup_unavailable="Fast-camp offers require a matching Hailstone host. Use /camp for the normal countdown.";
+bool popup_services(const PluginHostApi* host) noexcept {
+#if defined(BASTION_OPTIONAL_CAMP_DIALOG) && BASTION_OPTIONAL_CAMP_DIALOG
+    return HAILSTONE_HOST_HAS(host,get_large_dialog)&&HAILSTONE_HOST_HAS(host,answer_large_dialog);
+#else
+    (void)host;
+    return false;
+#endif
+}
 bool valid_text(std::string_view value,std::size_t maximum) {
     return value.size()<=maximum&&std::none_of(value.begin(),value.end(),[](unsigned char c){return c<32||c==127;});
 }
@@ -50,8 +59,11 @@ bool Adapter::allowed(std::uint32_t caps) const noexcept {
     try {return HAILSTONE_HOST_HAS(host_,caps)&&(host_->caps(host_->host)&caps)==caps;}catch(...){return false;}
 }
 bool Adapter::supported() const noexcept {
-    return HAILSTONE_HOST_HAS(host_,get_large_dialog)&&HAILSTONE_HOST_HAS(host_,answer_large_dialog)&&
-           HAILSTONE_HOST_HAS(host_,get_map_policy)&&allowed(action_caps);
+    return popup_services(host_)&&HAILSTONE_HOST_HAS(host_,get_map_policy)&&allowed(action_caps);
+}
+std::string_view Adapter::message() const {
+    if(message_==idle_message&&!popup_services(host_))return popup_unavailable;
+    return message_;
 }
 std::optional<Adapter::Live> Adapter::live() const {
     if(!active()||!allowed(HAILSTONE_CAP_READ)||!HAILSTONE_HOST_HAS(host_,get_player)||!HAILSTONE_HOST_HAS(host_,get_spawn)||
@@ -66,8 +78,11 @@ std::optional<Adapter::Live> Adapter::live() const {
     if(!host_->get_map_policy(host_->host,&policy)||policy.size<offsetof(HailstoneMapPolicy,context)+sizeof(policy.context)||
        !policy.context)return {};
     const auto name=services::bounded(player.name);if(name.empty())return {};
-    return Live{{player.spawn_id,player.zone_id,player.zone_instance,policy.context,spawn.incarnation,name},
-                (player.observation_flags&HAILSTONE_PLAYER_CAMPING)!=0};
+    bool camping=false;
+#if defined(BASTION_OPTIONAL_CAMP_DIALOG) && BASTION_OPTIONAL_CAMP_DIALOG
+    camping=(player.observation_flags&HAILSTONE_PLAYER_CAMPING)!=0;
+#endif
+    return Live{{player.spawn_id,player.zone_id,player.zone_instance,policy.context,spawn.incarnation,name},camping};
 }
 bool Adapter::refresh_settings() {
     const auto generation=generation_;
@@ -83,6 +98,7 @@ bool Adapter::refresh_settings() {
 }
 bool Adapter::set_enabled(bool value) {
     error_.clear();
+    if(value&&!popup_services(host_)) {error_=popup_unavailable;return false;}
     const auto generation=generation_;
     const auto before=live();
     if((value&&!supported())||!refresh_settings()||!allowed(HAILSTONE_CAP_READ|HAILSTONE_CAP_ACTIONS)) {
@@ -94,7 +110,9 @@ bool Adapter::set_enabled(bool value) {
     }
     if(!settings_.set("enabled",value?1:0)){error_=settings_.error();return false;}
     if(!value)retire();
-    message_=value?"Eligible server fast-camp offers will be accepted for new camps.":"Ordinary camping restored. /fastcamp remains available for one camp.";
+    if(value)message_="Eligible server fast-camp offers will be accepted for new camps.";
+    else if(popup_services(host_))message_="Ordinary camping restored. /fastcamp remains available for one camp.";
+    else message_=popup_unavailable;
     return true;
 }
 bool Adapter::arm(const Live& current,bool explicit_request) {
@@ -116,6 +134,7 @@ bool Adapter::start(std::string_view destination) {
     if(!argument.empty()&&argument!="desk"&&argument!="desktop"&&argument!="server") {
         error_="Use /fastcamp [desktop|server], or /fastcamp cancel to stop accepting an offer.";return false;
     }
+    if(!popup_services(host_)) {retire();error_=popup_unavailable;return false;}
     try {
         if(!supported()||!allowed(HAILSTONE_CAP_COMMANDS)||!HAILSTONE_HOST_HAS(host_,do_command)||!refresh_settings()) {
             retire();error_="Fast camp requires the matching client update, permission and a current Bastion character.";return false;
@@ -162,7 +181,7 @@ bool Adapter::command(std::string_view line) {
     return true;
 }
 void Adapter::outgoing(std::uint16_t opcode) {
-    if(opcode!=camp_opcode||!active())return;
+    if(opcode!=camp_opcode||!active()||!popup_services(host_))return;
     try {
         if(starting_&&armed_&&explicit_) {
             const auto generation=generation_;const auto current=live();
@@ -176,6 +195,7 @@ void Adapter::outgoing(std::uint16_t opcode) {
     }catch(...){retire();error_="The camp request could not be observed.";}
 }
 void Adapter::pulse() {
+#if defined(BASTION_OPTIONAL_CAMP_DIALOG) && BASTION_OPTIONAL_CAMP_DIALOG
     if(!armed_)return; // No idle clock, character, popup or filesystem reads.
     try {
         if(!active()||!supported()||!HAILSTONE_HOST_HAS(host_,monotonic_ms)) {retire();return;}
@@ -205,6 +225,7 @@ void Adapter::pulse() {
         message_=answered?"Fast-camp offer accepted locally; waiting for the server to finish camping.":
                           "The fast-camp offer changed or could not be answered. Normal camping continues.";
     }catch(...){retire();error_="The fast-camp offer could not be checked. Normal camping continues.";}
+#endif
 }
 int Adapter::callback(void* self,const HailstoneArgs* args,HailstoneOut* out) noexcept {
     if(!self)return 0;
@@ -230,7 +251,7 @@ int Adapter::call(const HailstoneArgs* args,HailstoneOut* out) {
     } else if(*operation=="cancel")cancel();
     else if(*operation!="state")return 0;
     result.begin();result.boolean("ok",ok);result.boolean("active",active());result.boolean("supported",supported());
-    result.boolean("enabled",enabled());result.boolean("armed",armed_);result.string("message",message_);
+    result.boolean("enabled",enabled());result.boolean("armed",armed_);result.string("message",message());
     result.string("error",error_.empty()?settings_.error():error_);result.end();return 1;
 }
 } // namespace bastion::fast_camp

@@ -1,5 +1,11 @@
 # Changes
 
+## 0.1.0-preview.12
+
+- Add Raid Ready Check to Modern and Gamepad. Raid leaders can start a 45-second check or end it early, and members can change their answers while it is open.
+- Show each player's response beside HP and report totals by subgroup. The response window works with Raid Bars hidden or set to clickthrough.
+- This Windows preview requires Hailstone 0.7.3-beta or newer. Shared checks require the matching Bastion server update.
+
 ## 0.1.0-preview.10
 
 - Allow server-managed dire-charmed pets to equip cursor items and return eligible gear through Pet Inventory.

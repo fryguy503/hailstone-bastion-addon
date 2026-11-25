@@ -21,10 +21,14 @@ struct Rig:citadel_test::Host {
     std::uint64_t map_context=UINT64_MAX-19;
     std::uint32_t map_size=sizeof(HailstoneMapPolicy);
     bool map_available=true;
-    bool camping=false,allow_camp=true,has_dialog=false,answer_ok=true;
+    bool camping=false,allow_camp=true;
+#if defined(BASTION_OPTIONAL_CAMP_DIALOG) && BASTION_OPTIONAL_CAMP_DIALOG
+    bool has_dialog=false,answer_ok=true;
     HailstoneLargeDialog dialog{};
+    std::function<void()> during_dialog,during_answer;
+#endif
     std::vector<std::string> chat;
-    std::function<void()> during_clock,during_dialog,during_answer,during_directory;
+    std::function<void()> during_clock,during_directory;
     static Rig& self(void* p) {return *static_cast<Rig*>(static_cast<citadel_test::Host*>(p));}
     Rig() {
         static unsigned serial=0;
@@ -36,7 +40,9 @@ struct Rig:citadel_test::Host {
         api.monotonic_ms=[](void* p){auto& r=self(p);++r.clock_reads;if(r.during_clock)r.during_clock();return r.now;};
         api.get_player=[](void* p,HailstonePlayer* out){auto& r=self(p);++r.player_reads;*out={};out->size=sizeof(*out);
             out->in_zone=r.in_zone?1:0;out->spawn_id=r.player;out->zone_id=r.zone;
+#if defined(BASTION_OPTIONAL_CAMP_DIALOG) && BASTION_OPTIONAL_CAMP_DIALOG
             out->observation_flags=r.camping?HAILSTONE_PLAYER_CAMPING:0;
+#endif
             std::copy(r.name.begin(),r.name.end(),out->name);return 1;};
         api.get_spawn=[](void* p,std::uint32_t id,HailstoneSpawn* out){auto& r=self(p);++r.spawn_reads;*out={};out->size=sizeof(*out);
             out->id=id;out->incarnation=r.incarnation;return 1;};
@@ -53,6 +59,7 @@ struct Rig:citadel_test::Host {
             if(r.camping){r.camping=false;return;}
             r.addon.outgoing(fast::camp_opcode);r.camping=true;};
         api.write_chat=[](void* p,const char* line,std::uint32_t){self(p).chat.emplace_back(line);};
+#if defined(BASTION_OPTIONAL_CAMP_DIALOG) && BASTION_OPTIONAL_CAMP_DIALOG
         api.get_large_dialog=[](void* p,HailstoneLargeDialog* out){auto& r=self(p);++r.dialog_reads;
             check(out&&out->size==sizeof(*out),"dialog read lost the SDK output extent");
             if(!r.has_dialog)return 0;*out=r.dialog;if(r.during_dialog)r.during_dialog();return 1;};
@@ -60,15 +67,16 @@ struct Rig:citadel_test::Host {
             ++r.answers;check(token==r.dialog.token&&camp==r.dialog.camp_token&&button==1&&
                 flags==HAILSTONE_DIALOG_EXPECT_CAMP_DISCONNECT,"fast camp changed tokens/button or requested an unsafe action");
             if(r.answer_ok)r.has_dialog=false;if(r.during_answer)r.during_answer();return r.answer_ok?1:0;};
+        dialog.size=sizeof(dialog);dialog.flags=HAILSTONE_LARGE_DIALOG_YES_NO|HAILSTONE_LARGE_DIALOG_CAMPING;
+        dialog.token=UINT64_MAX-1;dialog.camp_token=UINT64_MAX-3;dialog.popup_id=fast::accept_popup;
+        dialog.negative_id=fast::decline_popup;dialog.remaining_ms=29000;
+#endif
         api.arg=[](void*,const HailstoneArgs* args,std::size_t i,HailstoneValue* out){if(i>=args->values.size())return 0;
             *out=args->values[i];return 1;};
         api.out_begin_table=[](void*,HailstoneOut*){};api.out_begin_array=[](void*,HailstoneOut*){};api.out_end=[](void*,HailstoneOut*){};
         api.out_key=[](void*,HailstoneOut* out,const char* key){out->key=key;};
         api.out_value=[](void*,HailstoneOut* out,const HailstoneValue* value){if(value->kind==HAILSTONE_BOOL)out->booleans[out->key]=value->i!=0;
             if(value->kind==HAILSTONE_STRING)out->strings[out->key]=value->s;};
-        dialog.size=sizeof(dialog);dialog.flags=HAILSTONE_LARGE_DIALOG_YES_NO|HAILSTONE_LARGE_DIALOG_CAMPING;
-        dialog.token=UINT64_MAX-1;dialog.camp_token=UINT64_MAX-3;dialog.popup_id=fast::accept_popup;
-        dialog.negative_id=fast::decline_popup;dialog.remaining_ms=29000;
         addon.set_host(&api);addon.initialize();addon.peer(true);addon.game_state(GAMESTATE_INGAME);
     }
     ~Rig() {
@@ -83,6 +91,7 @@ struct Rig:citadel_test::Host {
     void tick(std::uint64_t delay=100) {now+=delay;addon.pulse();}
     void normal_camp() {addon.observe_command("/camp");addon.outgoing(fast::camp_opcode);camping=true;}
 };
+#if defined(BASTION_OPTIONAL_CAMP_DIALOG) && BASTION_OPTIONAL_CAMP_DIALOG
 void explicit_offer_and_idle_budget() {
     Rig r;const auto clock=r.clock_reads,players=r.player_reads,spawns=r.spawn_reads,dirs=r.directory_reads;
     for(unsigned i=0;i<600;++i)r.addon.pulse();
@@ -198,9 +207,41 @@ void lifecycle_messages_are_session_local() {
               "resetting lifecycle status repeated an answer, command or chat action");
     }
 }
+#else
+void ordinary_camp_without_popup_support() {
+    Rig r;
+    const auto state=r.call({text("state")});
+    check(state.booleans.at("active")&&!state.booleans.at("supported")&&!state.booleans.at("armed"),
+          "Popup-free SDK advertised fast-camp support");
+    check(state.strings.at("message").find("matching Hailstone host")!=std::string::npos&&
+          state.strings.at("message").find("normal countdown")!=std::string::npos,
+          "Popup-free SDK did not explain the normal camp fallback");
+    const auto setting=r.call({text("set"),text("enabled"),number(1)});
+    check(!setting.booleans.at("ok")&&!r.addon.enabled(),"Popup-free SDK saved an unsupported opt-in");
+    check(r.addon.command("/fastcamp desktop")&&r.commands.empty()&&r.chat.size()==1&&
+          r.chat.back().find("/camp")!=std::string::npos,"Unavailable fast camp silently dispatched a command or lost its fallback");
+
+    const auto clock=r.clock_reads,players=r.player_reads,dirs=r.directory_reads;
+    check(!r.addon.command("/camp"),"Addon consumed the ordinary camp command");
+    r.api.do_command(r.api.host,"/camp");
+    r.tick();
+    check(r.camping&&!r.addon.armed()&&r.commands.size()==1&&r.sent.empty(),
+          "Ordinary camp was replaced or armed a popup request");
+    r.api.do_command(r.api.host,"/camp");
+    r.tick();
+    check(!r.camping&&!r.addon.armed()&&r.commands.size()==2&&r.sent.empty(),
+          "Ordinary camp cancellation was intercepted");
+    check(r.clock_reads==clock&&r.player_reads==players&&r.directory_reads==dirs,
+          "Ordinary camping ran addon polling without a popup service");
+}
+#endif
 }
 int main() {try {
+#if defined(BASTION_OPTIONAL_CAMP_DIALOG) && BASTION_OPTIONAL_CAMP_DIALOG
     explicit_offer_and_idle_budget();unrelated_expired_and_cancelled_offers();preferences_permissions_and_context();strict_actions_and_reentrancy();
     lifecycle_messages_are_session_local();
+#else
+    ordinary_camp_without_popup_support();
+#endif
     std::cout<<"Fast camp: "<<citadel_test::checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Fast camp after "<<citadel_test::checks<<" checks: "<<e.what()<<'\n';return 1;}}

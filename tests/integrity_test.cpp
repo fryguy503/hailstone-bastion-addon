@@ -17,6 +17,7 @@ namespace server=bastion_native_integrity;
 using citadel_test::check;
 namespace {
 using Wire=std::vector<std::uint8_t>;
+constexpr bool kNativeReportSupported = HAILSTONE_PLUGIN_ABI == integrity::native_report_abi;
 void put(Wire& bytes,std::size_t at,std::uint64_t value,unsigned width=4) {
     for(unsigned n=0;n<width;++n) bytes.at(at+n)=static_cast<std::uint8_t>(value>>(n*8));
 }
@@ -331,6 +332,15 @@ void valid_v3_prevents_legacy_downgrade() {
     check(failed.sent.size()==1&&failed.report().size()==16&&failed.addon.legacy_submitted(),
           "new session could not use legacy after retiring its previous native challenge");
 }
+void unsupported_v3_sdk_preserves_login_protocol() {
+    Rig rig;rig.select();rig.issue(603);rig.addon.pulse();outgoing_milestones(rig);
+    check(rig.addon.status()==integrity::Status::Unsupported&&rig.sent.empty()&&rig.measured.empty()&&
+          !rig.addon.legacy_submitted()&&rig.addon.legacy_attempts()==0,
+          "the mismatched v3 SDK sent a misdeclared report or downgraded the challenged login");
+    rig.addon.world_login(false);rig.select();rig.addon.world_outgoing(legacy_milestones.front());
+    check(rig.addon.legacy_submitted(),"a fresh login using v2 lost its DLL verification");
+    check_legacy_wire(rig,rig.module.fnv1a63);
+}
 void malformed_v3_does_not_disable_legacy() {
     const auto valid=server::challenge(700);
     for(std::size_t length=0;length<valid.size();++length) {
@@ -372,8 +382,15 @@ void legacy_reentrant_measurement() {
     Rig replacement;replacement.select();bool replaced=false;
     replacement.during_measure=[&](std::uint32_t){if(!replaced){replaced=true;replacement.issue(800);}};
     replacement.addon.world_outgoing(legacy_milestones.front());
-    check(replacement.sent.empty()&&replacement.addon.status()==integrity::Status::Queued&&!replacement.addon.legacy_submitted(),
+    const auto expected=kNativeReportSupported?integrity::Status::Queued:integrity::Status::Unsupported;
+    check(replacement.sent.empty()&&replacement.addon.status()==expected&&!replacement.addon.legacy_submitted(),
           "legacy measurement completion overwrote a reentrant native challenge");
+    if (!kNativeReportSupported) {
+        outgoing_milestones(replacement);replacement.addon.pulse();
+        check(replacement.measured.size()==1&&replacement.sent.empty(),
+              "a reentrant unsupported challenge retried the legacy report");
+        return;
+    }
     check(replacement.measured==std::vector<std::uint32_t>({HAILSTONE_BINARY_CALLING_PLUGIN,HAILSTONE_BINARY_EXECUTABLE,HAILSTONE_BINARY_CALLING_PLUGIN}),
           "replacement challenge did not independently measure native binaries");
     replacement.addon.pulse();server::Report native;
@@ -403,13 +420,17 @@ void legacy_reentrant_submission() {
     Rig replacement;replacement.select();bool changed=false;
     replacement.during_send=[&]{if(!changed){changed=true;replacement.issue(801);}};
     replacement.addon.world_outgoing(legacy_milestones.front());
-    check(replacement.sent.size()==1&&replacement.report().size()==16&&replacement.addon.status()==integrity::Status::Queued&&
+    const auto expected=kNativeReportSupported?integrity::Status::Queued:integrity::Status::Unsupported;
+    check(replacement.sent.size()==1&&replacement.report().size()==16&&replacement.addon.status()==expected&&
           !replacement.addon.legacy_submitted()&&!replacement.addon.report_sent(),
           "legacy send completion defeated the current reentrant native challenge");
     replacement.addon.pulse();server::Report native;
-    check(replacement.sent.size()==2&&server::decode(replacement.report(),native)&&native.nonce==801,
-          "native challenge replacement did not send its actual current report after a legacy submission");
-    outgoing_milestones(replacement);check(replacement.sent.size()==2,"native replacement did not suppress later legacy milestones");
+    if (kNativeReportSupported)
+        check(replacement.sent.size()==2&&server::decode(replacement.report(),native)&&native.nonce==801,
+              "native challenge replacement did not send its actual current report after a legacy submission");
+    outgoing_milestones(replacement);
+    check(replacement.sent.size()==(kNativeReportSupported?2u:1u),
+          "native replacement did not suppress later legacy milestones");
     Rig unsupported;unsupported.select();bool challenged=false;
     unsupported.during_send=[&]{if(!challenged){challenged=true;auto bytes=server::challenge(802);put(bytes,24,integrity::features|(1ull<<63),8);unsupported.deliver(bytes);}};
     unsupported.addon.world_outgoing(legacy_milestones.front());outgoing_milestones(unsupported);unsupported.addon.pulse();
@@ -453,6 +474,7 @@ void zoning_preserves_successful_receipts_without_resending() {
     legacy.addon.world_outgoing(legacy_milestones.front());
     check(legacy.sent.size()==2&&legacy.measured.size()==2&&legacy.sent.back().bytes!=receipt,
           "fresh login reused the old report instead of measuring its current loaded addon");
+    if constexpr (HAILSTONE_PLUGIN_ABI != integrity::native_report_abi) return;
     Rig native;native.addon.world_login(false);native.select();native.issue(901);native.addon.pulse();
     native.deliver(server::acknowledgement(901,server::Status::Accepted,"Current login approved"));
     native.addon.world_login(true);native.addon.peer(false);native.addon.game_state(GAMESTATE_PRECHARSELECT);
@@ -473,10 +495,12 @@ void zoning_cancels_unsubmitted_retries_and_host_reset_retires_receipts() {
     check(queued.sent.size()==1&&queued.measured.size()==1&&!queued.addon.legacy_submitted()&&
           queued.addon.status()==integrity::Status::ReconnectRequired&&queued.state().booleans.at("requires_reconnect"),
           "zoning retried an unsubmitted fresh-login report or presented its failed attempt as a receipt");
-    Rig native;native.select();native.issue(902);
-    native.addon.world_login(true);native.addon.peer(false);native.select();native.addon.pulse();outgoing_milestones(native);
-    check(native.sent.empty()&&native.measured.size()==2&&native.addon.status()==integrity::Status::ReconnectRequired,
-          "a queued native report leaked onto a later zoning connection");
+    if constexpr (HAILSTONE_PLUGIN_ABI == integrity::native_report_abi) {
+        Rig native;native.select();native.issue(902);
+        native.addon.world_login(true);native.addon.peer(false);native.select();native.addon.pulse();outgoing_milestones(native);
+        check(native.sent.empty()&&native.measured.size()==2&&native.addon.status()==integrity::Status::ReconnectRequired,
+              "a queued native report leaked onto a later zoning connection");
+    }
     Rig reset;reset.select();reset.addon.world_outgoing(legacy_milestones.front());
     reset.addon.world_login(true);reset.addon.peer(false);reset.select();reset.addon.set_host(nullptr);
     check(reset.addon.status()==integrity::Status::Inactive&&!reset.addon.legacy_submitted()&&!reset.addon.report_sent(),
@@ -502,6 +526,7 @@ void initial_world_close_cancels_pending_and_fresh_login_recovers() {
         check(legacy.sent.size()==2&&legacy.measured.size()==2&&legacy.addon.legacy_submitted(),
               "fresh full login failed to remeasure and submit after initial legacy cancellation");
         check_legacy_wire(legacy,legacy.module.fnv1a63);
+        if constexpr (HAILSTONE_PLUGIN_ABI != integrity::native_report_abi) continue;
         for(const bool already_sent:{false,true}) {
             Rig native;native.select();const auto old_nonce=nonce++;native.issue(old_nonce);
             if(already_sent) native.addon.pulse();
@@ -540,6 +565,7 @@ void initial_world_close_preserves_completed_receipts() {
               retained.strings.at("legacy_checksum")==original.strings.at("legacy_checksum")&&
               retained.strings.at("legacy_addon_bytes")==original.strings.at("legacy_addon_bytes"),
               "initial WORLD close erased, rehashed or upgraded a completed unacknowledged legacy receipt");
+        if constexpr (HAILSTONE_PLUGIN_ABI != integrity::native_report_abi) continue;
         Rig native;native.select();native.issue(1100);native.addon.pulse();
         native.deliver(server::acknowledgement(1100,server::Status::Accepted,"Current login approved"));
         const auto accepted=native.state();
@@ -563,6 +589,7 @@ void initial_world_close_during_send_cannot_restore_submission() {
             check(legacy.sent.size()==1&&legacy.measured.size()==1&&!legacy.addon.legacy_submitted()&&
                   legacy.addon.status()==integrity::Status::ReconnectRequired&&legacy.state().booleans.at("requires_reconnect"),
                   "legacy host send completion restored queued/submitted state after reentrant initial WORLD close");
+            if constexpr (HAILSTONE_PLUGIN_ABI != integrity::native_report_abi) continue;
             Rig native;native.select();native.issue(1200);native.admit=admit;
             native.during_send=[&]{
                 native.deliver(server::acknowledgement(1200,server::Status::Accepted,"Reentrant acknowledgement"));
@@ -602,9 +629,14 @@ void initial_world_close_during_legacy_measurement_requires_reconnect() {
 } // namespace
 int main() {
     try {
-        actual_wire_and_server_acceptance();parser_and_legacy_routing();acknowledgement_binding();retry_timeout_and_reentrant_send();measurement_and_clock_failure();
+        if (HAILSTONE_PLUGIN_ABI == integrity::native_report_abi) {
+            actual_wire_and_server_acceptance();parser_and_legacy_routing();acknowledgement_binding();
+            retry_timeout_and_reentrant_send();measurement_and_clock_failure();valid_v3_prevents_legacy_downgrade();
+        } else {
+            unsupported_v3_sdk_preserves_login_protocol();
+        }
         legacy_wire_and_milestones();legacy_retries_and_snapshot();legacy_measurement_failures_and_new_session();
-        valid_v3_prevents_legacy_downgrade();malformed_v3_does_not_disable_legacy();legacy_reentrant_measurement();legacy_reentrant_submission();
+        malformed_v3_does_not_disable_legacy();legacy_reentrant_measurement();legacy_reentrant_submission();
         late_load_and_zoning_require_fresh_login();zoning_preserves_successful_receipts_without_resending();
         zoning_cancels_unsubmitted_retries_and_host_reset_retires_receipts();
         initial_world_close_cancels_pending_and_fresh_login_recovers();initial_world_close_preserves_completed_receipts();

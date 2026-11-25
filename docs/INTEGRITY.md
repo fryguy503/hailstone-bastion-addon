@@ -9,6 +9,8 @@ The addon also supports a negotiated **CIT1 version 3** WORLD handshake, with a 
 server change. The server sends a fresh connection nonce, the addon measures the actual Hailstone
 executable and its own loaded binary, and the server checks their SHA256 pair against its approved
 builds. Only the explicit version 3 acknowledgement can display **Accepted** in Settings.
+The version 3 wire format requires SDK ABI 3. Preview 12 uses ABI 4 and reports **Unsupported**
+if a server requests version 3. Bastion's version 2 DLL report uses the measured binary as usual.
 
 ## Current server: legacy DLL report
 
