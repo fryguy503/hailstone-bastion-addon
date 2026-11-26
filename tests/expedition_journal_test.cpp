@@ -31,6 +31,7 @@ constexpr std::uint32_t kMagic = 0x31524a42;
 
 struct Rig : citadel_test::Host {
     bastion::journal::Adapter journal;
+    std::vector<std::uint32_t> inspected;
 
     Rig() {
         api.arg = [](void*, const HailstoneArgs* args, std::size_t index, HailstoneValue* out) {
@@ -53,9 +54,15 @@ struct Rig : citadel_test::Host {
             if (value->kind == HAILSTONE_BOOL) out->put(value->i != 0);
             if (value->kind == HAILSTONE_STRING) out->put(value->s);
         };
+        api.inspect_item = [](void* host, std::uint32_t id, const std::uint32_t* augments) {
+            check(augments == nullptr, "a journal preview supplied augments");
+            static_cast<Rig*>(static_cast<citadel_test::Host*>(host))->inspected.push_back(id);
+            return 1;
+        };
         journal.set_host(&api);
         journal.initialize();
     }
+
 
     Json call(std::initializer_list<const char*> args, bool valid = true) {
         const auto& fn = functions.at("expedition_journal");
@@ -221,12 +228,37 @@ void lifecycle() {
     check(rig.call({"window"})["shown"] == false && rig.sent.size() == 3,
           "closed journal polled the realm or stayed open");
 }
+
+void inspect_items() {
+    Rig rig;
+    rig.call({"inspect_item", "147760"}, false);
+    rig.open();
+    check(rig.call({"window"})["canInspectItem"] == true, "item inspection capability was not published");
+    rig.call({"inspect_item", "147760"});
+    rig.call({"inspect_item", "4294967296"}, false);
+    rig.call({"inspect_item", "47283"}, false);
+    rig.call({"select", "copium", "170009"});
+    rig.now += 1100;
+    rig.journal.pulse();
+    const Json detail{{"relicId", 170009}, {"relicName", "Relic of the Tormentors"},
+                      {"rewards", Json::array({{{"itemId", 47283}, {"name", "Girdle of the Fleet"}},
+                                               {{"itemId", 47289}}})}};
+    rig.receive(rig.reply("copium", {{"relic", detail}}));
+    rig.call({"inspect_item", "170009"});
+    rig.call({"inspect_item", "47283"});
+    rig.call({"inspect_item", "47289"}, false);
+    rig.journal.begin_zone();
+    rig.call({"inspect_item", "47283"}, false);
+    check(rig.inspected == std::vector<std::uint32_t>{147760, 170009, 47283},
+          "inspection forwarded a hidden, expired, or out-of-scope item");
+}
 } // namespace
 
 int main() {
     try {
         snapshots();
         lifecycle();
+        inspect_items();
         std::cout << citadel_test::checks << " native expedition journal checks\n";
         return 0;
     } catch (const std::exception& e) {

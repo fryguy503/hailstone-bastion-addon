@@ -1,5 +1,11 @@
 # Changes
 
+## 0.1.0-preview.20
+
+- Combine ToFS Group and Raid into one Tower of Frozen Shadow page with a mode switch.
+- Give each expedition an illustrated native banner and matching status and entry cards.
+- Open native item previews for named journal rewards and entry items, and spell details for published spell references supported by the client.
+
 ## 0.1.0-preview.19
 
 - Gather all expedition pages in one selector in Modern and Gamepad. The Encounter Library and Copium tracker keep direct shortcuts.

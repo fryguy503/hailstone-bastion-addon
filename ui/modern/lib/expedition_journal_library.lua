@@ -1,4 +1,6 @@
 -- SPDX-License-Identifier: MIT
+local Inspect = dofile("lib/expedition_journal_inspect.lua")
+local SpellReferences = dofile("lib/expedition_journal_spell_references.lua")
 local M = {}
 local pageSize = 12
 local catalog, bySlug, zones, kinds
@@ -46,6 +48,8 @@ function M.open(view, slug)
   if not entry then return end
   view.encounter = entry
   view.encounterBackY = view.pageScrollY
+  view.spellTitles = {}
+  view.spellGeneration = view.generation
   view.scroll = true
 end
 
@@ -181,10 +185,21 @@ function M.detail(view, scale, style)
     end
   end
   if section(style, "Abilities", detail.abilities) then
-    for _, ability in ipairs(detail.abilities) do
+    local spellIds = SpellReferences[entry.slug]
+    if not view.spellTitles or view.spellGeneration ~= view.generation then
+      view.spellTitles = {}
+      view.spellGeneration = view.generation
+    end
+    for index, ability in ipairs(detail.abilities) do
       style.note(ability.name, "gold")
       if ability.summary and ability.summary ~= "" then style.note(ability.summary, "muted") end
       paragraphs(style, ability.description)
+      local links = spellIds and spellIds[ability.name]
+      if links then
+        for _, id in ipairs(links) do
+          Inspect.spell(style, id, "spell:" .. entry.slug .. ":" .. index, scale, view.spellTitles)
+        end
+      end
     end
   end
   for _, more in ipairs(detail.sections or {}) do

@@ -3,18 +3,26 @@ local Model = dofile("lib/expedition_journal_state.lua")
 local Guide = dofile("lib/expedition_journal_catalog.lua")
 local Library = dofile("lib/expedition_journal_library.lua")
 local Featured = dofile("lib/expedition_journal_featured.lua")
+local Art = dofile("lib/expedition_journal_art.lua")
+local Inspect = dofile("lib/expedition_journal_inspect.lua")
 local M = {}
 local expeditions = {
-  {id = "normal", label = "Mistmoore Eclipse"},
+  {id = "normal", label = "Mistmoore Eclipse", modes = {"normal", "hard"}, preference = "raidMode"},
   {id = "vigil", label = "Midnight Vigil"},
+  {id = "tofs", label = "Tower of Frozen Shadow", shortLabel = "Frozen Shadow",
+    modes = {"tofs_group", "tofs_raid"}, preference = "tofsMode"},
 }
-local featuredById = {}
+local expeditionByMode, featuredById = {}, {}
+for _, entry in ipairs(expeditions) do
+  for _, mode in ipairs(entry.modes or {entry.id}) do expeditionByMode[mode] = entry end
+end
 for _, entry in ipairs(Featured) do
   featuredById[entry.id] = entry
-  expeditions[#expeditions + 1] = entry
+  if not expeditionByMode[entry.id] then
+    expeditions[#expeditions + 1] = entry
+    expeditionByMode[entry.id] = entry
+  end
 end
-local expeditionById = {}
-for _, entry in ipairs(expeditions) do expeditionById[entry.id] = entry end
 
 local color = {
   bg = {.071, .075, .086, 1}, rail = {.090, .090, .102, 1},
@@ -24,8 +32,6 @@ local color = {
   bright = {1, .875, .690, 1}, good = {.655, .847, .718, 1},
   danger = {.945, .655, .585, 1}, active = {.325, .208, .176, 1},
   hover = {.252, .190, .185, 1}, rest = {.154, .124, .139, 1},
-  ink = {.137, .095, .124, 1}, plum = {.208, .119, .151, 1},
-  ember = {.489, .254, .201, 1}, peak = {.126, .087, .126, 1},
 }
 
 local function setColor(name, c)
@@ -121,13 +127,13 @@ local function featureHeading(title, scale)
   ui.Dummy(0, #lines * size + 2 * scale)
 end
 
-local function guideButton(title, id, scale)
+local function linkButton(title, id, scale)
   local x, y = ui.GetCursorScreenPos()
   local width = ui.GetContentRegionAvail()
   local _, lineHeight = ui.CalcTextSize("Ag")
   local lines = wrapLines(title, width - 28 * scale, 1)
   local height = #lines * lineHeight + 8 * scale
-  local clicked = ui.Selectable("##journal-guide:" .. id, false, 0, width, height)
+  local clicked = ui.Selectable(id, false, 0, width, height)
   ui.PushClipRect(x, y, x + width, y + height, true)
   drawText(x + 5 * scale, y + 4 * scale, table.concat(lines, "\n"), color.gold)
   drawText(x + width - 14 * scale, y + 4 * scale, "›", color.gold)
@@ -135,20 +141,44 @@ local function guideButton(title, id, scale)
   return clicked
 end
 
+local function guideButton(title, id, scale)
+  return linkButton(title, "##journal-guide:" .. id, scale)
+end
+
+local function itemLink(name, id, key, enabled, scale)
+  if not name then return false end
+  local style = {button = function() return linkButton(name, "##journal-item-" .. key, scale) end}
+  return Inspect.item(style, name, id, key, enabled)
+end
+
 local libraryStyle = {button = button, featureHeading = featureHeading, guideButton = guideButton,
   heading = heading, note = note}
 
-local function rows(id, values)
+local function rows(id, values, wideValue)
   local flags = ui.TableFlags
   if not ui.BeginTable("##journal-fields-" .. id, 2, flags.BordersInnerH | flags.SizingStretchProp) then return end
-  ui.TableSetupColumn("Field", 0, 1)
-  ui.TableSetupColumn("Value", 0, 1)
+  ui.TableSetupColumn("Field", 0, wideValue and .38 or 1)
+  ui.TableSetupColumn("Value", 0, wideValue and .62 or 1)
   for _, entry in ipairs(values) do
     ui.TableNextRow()
     ui.TableNextColumn(); note(entry[1], "muted")
     ui.TableNextColumn(); note(entry[2], entry[3])
   end
   ui.EndTable()
+end
+
+local function wrappedHeight(text, width)
+  local _, lineHeight = ui.CalcTextSize("Ag")
+  return #wrapLines(tostring(text or "Unavailable"), math.max(1, width), 1) * lineHeight
+end
+
+local function rowsHeight(values, width, scale)
+  local inner = math.max(1, width - 47 * scale)
+  local height = 0
+  for _, entry in ipairs(values) do
+    height = height + math.max(wrappedHeight(entry[1], inner * .38), wrappedHeight(entry[2], inner * .62)) + 5 * scale
+  end
+  return height
 end
 
 local function card(id, width, height, draw)
@@ -159,10 +189,17 @@ local function card(id, width, height, draw)
   if colors > 0 then ui.PopStyleColor(colors) end
 end
 
-local function groupCards(leftId, leftHeight, left, rightId, rightHeight, right, scale)
-  local width = ui.GetContentRegionAvail()
+local function pairedWidths(width, scale)
   if width >= 575 * scale then
     local leftWidth = math.floor((width - 8 * scale) * .53)
+    return leftWidth, width - 8 * scale - leftWidth, true
+  end
+  return width, width, false
+end
+
+local function groupCards(leftId, leftHeight, left, rightId, rightHeight, right, scale)
+  local leftWidth, _, paired = pairedWidths(ui.GetContentRegionAvail(), scale)
+  if paired then
     card(leftId, leftWidth, leftHeight, left)
     ui.SameLine()
     card(rightId, 0, rightHeight, right)
@@ -172,80 +209,73 @@ local function groupCards(leftId, leftHeight, left, rightId, rightHeight, right,
   end
 end
 
-local function gradient(x, y, w, h, top, bottom)
-  if ui.DrawRectGradient then
-    ui.DrawRectGradient(x, y, x + w, y + h,
-      top[1], top[2], top[3], top[4], bottom[1], bottom[2], bottom[3], bottom[4])
-  else
-    fill(x, y, w, h, top)
+local mistmooreModes = {{"Normal", "normal", 84}, {"Bloodbound", "hard", 106}}
+local tofsModes = {{"Group", "tofs_group", 84}, {"Raid", "tofs_raid", 84}}
+
+local function bannerCopy(mode)
+  if mode == "normal" or mode == "hard" then
+    return "mistmoore", "Castle Mistmoore / Raid", "The Hour of the\nLast Eclipse", "What can we run tonight?", mistmooreModes
   end
+  if mode == "vigil" then
+    return "mistmoore", "Castle Mistmoore / Group", "The Archivist's\nMidnight Vigil", "The route to your first Normal raid"
+  end
+  if mode == "copium" then
+    return "copium", "Relic redemption", "Copium Tracker", "Check boss credit and compare relic rewards"
+  end
+  local info = featuredById[mode]
+  local tower = mode == "tofs_group" or mode == "tofs_raid"
+  return info.art or "mistmoore", info.zone .. " / " .. info.subtitle, info.bannerTitle or info.title,
+    info.tagline, tower and tofsModes or nil
 end
 
-local function tower(x, base, w, height, roof, c)
-  fill(x, base - height, w, height, c)
-  ui.DrawTriangleFilled(x, base - height, x + w * .5, base - height - roof, x + w, base - height,
-    c[1], c[2], c[3], c[4])
-end
-
-local function skyline(x, y, w, h, scale)
-  local center, middle = x + w * .785, y + h * .38
-  local radius = math.min(58 * scale, w * .14)
-  for layer = 7, 1, -1 do
-    ui.DrawCircleFilled(center, middle, radius + (layer * 22 + 22) * scale,
-      color.ember[1], color.ember[2], color.ember[3], .028)
+local function bannerTitleLines(title, width, ratio)
+  local lines = {}
+  for part in title:gmatch("[^\n]+") do
+    for _, text in ipairs(wrapLines(part, width, ratio)) do lines[#lines + 1] = text end
   end
-  ui.DrawCircleFilled(center, middle, radius + 21 * scale, .67, .32, .22, .08)
-  ui.DrawCircleFilled(center, middle, radius + 11 * scale, .71, .32, .23, .12)
-  ui.DrawCircle(center, middle, radius + 4 * scale, .91, .52, .38, .20, 7 * scale)
-  ui.DrawCircleFilled(center, middle, radius, .133, .085, .116, 1)
-  ui.DrawCircle(center, middle, radius, .94, .64, .43, .92, 2 * scale)
-  ui.DrawCircle(center, middle, radius + 1 * scale, 1, .77, .54, .25, 4 * scale)
-
-  local c = color.peak
-  local base = y + h - 1
-  local px = x + w * .48
-  local rw = (x + w) - px
-  fill(px, base - h * .095, rw, h * .095, c)
-  ui.DrawTriangleFilled(px, base, px + rw * .20, base - h * .24, px + rw * .52, base, c[1], c[2], c[3], c[4])
-  ui.DrawTriangleFilled(px + rw * .52, base, px + rw * .91, base - h * .31, px + rw, base, c[1], c[2], c[3], c[4])
-  tower(px + rw * .17, base, rw * .115, h * .30, h * .095, c)
-  tower(px + rw * .32, base, rw * .13, h * .43, h * .135, c)
-  tower(px + rw * .48, base, rw * .09, h * .31, h * .055, c)
-  tower(px + rw * .55, base, rw * .16, h * .55, h * .16, c)
-  tower(px + rw * .75, base, rw * .12, h * .31, h * .084, c)
-  tower(px + rw * .88, base, rw * .08, h * .22, h * .048, c)
+  return lines
 end
 
 local function hero(view, scale)
-  local raid = view.mode == "normal" or view.mode == "hard"
-  local copium = view.mode == "copium"
+  local art, eyebrow, title, tagline, modes = bannerCopy(view.mode)
+  local palette = Art.palette(art)
   local x, y = ui.GetCursorScreenPos()
   local w = ui.GetContentRegionAvail()
-  local h = (copium and 116 or raid and 202 or 160) * scale
+  local pad = 20 * scale
+  local leftWidth = math.max(1, (w >= 510 * scale and w * .51 or w) - 2 * pad)
+  local _, lineHeight = ui.CalcTextSize("Ag")
+  lineHeight = math.max(1, lineHeight)
   local size = math.min(42 * scale, w / 11)
-  ui.PushClipRect(x, y, x + w, y + h, true)
-  gradient(x, y, w, h, color.plum, color.ink)
-  if not copium and w >= 510 * scale then skyline(x, y, w, h, scale) end
-  line(x, y + h - 1, w, color.active)
-  local eyebrow = copium and "RELIC REDEMPTION" or raid and "CASTLE MISTMOORE / RAID" or "CASTLE MISTMOORE / GROUP"
-  local title = copium and "Copium Tracker" or Guide[view.mode].title:gsub(" Last ", "\nLast "):gsub(" Midnight ", "\nMidnight ")
-  local tagline = copium and "Check boss credit and compare relic rewards"
-    or raid and "What can we run tonight?" or "The route to your first Normal raid"
-  drawText(x + 20 * scale, y + 19 * scale, eyebrow, color.gold, 12 * scale)
+  local labels = wrapLines(eyebrow:upper(), leftWidth, 12 * scale / lineHeight)
+  local taglineLines = tagline and wrapLines(tagline, leftWidth, 14 * scale / lineHeight) or {}
   ui.PushFont(6)
-  drawText(x + 20 * scale, y + 38 * scale, title, color.bright, size)
+  local _, titleHeight = ui.CalcTextSize("Ag")
+  local lines = bannerTitleLines(title, leftWidth, size / math.max(1, titleHeight))
   ui.PopFont()
-  drawText(x + 20 * scale, y + (copium and 86 or 125) * scale, tagline, color.muted, 14 * scale)
+  local titleY = (26 + 12 * #labels) * scale
+  local taglineY = titleY + #lines * size + 3 * scale
+  local actionY = taglineY + (#taglineLines * 14 + 13) * scale
+  local minimum = modes and 202 or art == "copium" and 120 or 160
+  local h = math.max(minimum * scale, actionY + (modes and 50 or 8) * scale)
+  ui.PushClipRect(x, y, x + w, y + h, true)
+  Art.draw(art, x, y, w, h, scale)
+  line(x, y + h - 1, w, palette.line)
+  drawText(x + pad, y + 19 * scale, table.concat(labels, "\n"), palette.label, 12 * scale)
+  ui.PushFont(6)
+  drawText(x + pad, y + titleY, table.concat(lines, "\n"), palette.title, size)
+  ui.PopFont()
+  if tagline then drawText(x + pad, y + taglineY, table.concat(taglineLines, "\n"), palette.muted, 14 * scale) end
   ui.PopClipRect()
 
-  if raid then
-    ui.SetCursorScreenPos(x + 20 * scale, y + 152 * scale)
-    if button("Normal##journal-mode", buttonWidth("Normal", 84, scale), 31 * scale, view.mode == "normal") then
-      Model.navigate(view, "normal")
-    end
-    ui.SameLine()
-    if button("Bloodbound##journal-mode", buttonWidth("Bloodbound", 106, scale), 31 * scale, view.mode == "hard") then
-      Model.navigate(view, "hard")
+  if modes then
+    ui.SetCursorScreenPos(x + pad, y + actionY)
+    local modeWidth = math.max(1, (w - 2 * pad - 8 * scale) / #modes)
+    for index, mode in ipairs(modes) do
+      if index > 1 then ui.SameLine() end
+      if button(mode[1] .. "##journal-mode", math.min(buttonWidth(mode[1], mode[3], scale), modeWidth),
+          31 * scale, view.mode == mode[2]) then
+        Model.navigate(view, mode[2], modes == tofsModes)
+      end
     end
   end
   ui.SetCursorScreenPos(x, y + h - 1)
@@ -273,11 +303,13 @@ local function tabs(view, snapshot, journal, now, scale, featured)
   end
 end
 
-local function relics(items, inventory)
+local function relics(items, inventory, inspectItems, scale)
   for _, relic in ipairs(items) do
     local count = Model.relicQuantity(inventory, relic.id)
-    note(relic.name .. (type(count) ~= "number" and "" or count > 0 and " · Held" or " · Needed"),
-      count and count > 0 and "good" or "muted")
+    local name = relic.name .. (type(count) ~= "number" and "" or count > 0 and " · Held" or " · Needed")
+    if not itemLink(name, relic.id, "entry-" .. relic.id, inspectItems, scale) then
+      note(name, count and count > 0 and "good" or "muted")
+    end
   end
 end
 
@@ -334,14 +366,15 @@ local function guideCard(view, info, expanded, scale)
   end)
 end
 
-local function overview(view, snapshot, info, now, scale)
+local function overview(view, snapshot, info, now, scale, inspectItems)
   local mode = view.mode
   local vigil = mode == "vigil"
   local unlock = snapshot.data and snapshot.data.unlock
   local width = ui.GetContentRegionAvail()
   local height = (width < 365 * scale and 250 or 221) * scale
   local runHeight = height + (view.entryOpen and 65 * scale or 0)
-  local accessHeight = height + (not vigil and view.unlockOpen and (width < 510 * scale and 170 or 145) * scale or 0)
+  local accessHeight = height + (not vigil and view.unlockOpen and
+    (width < 510 * scale and 170 or 145) * scale + (inspectItems and #info.relics * 12 * scale or 0) or 0)
   groupCards("tonight", runHeight, function()
     local headline, detail = Model.headline(mode, snapshot, info, now)
     local saved, replay = Model.runLabels(snapshot, now)
@@ -367,14 +400,14 @@ local function overview(view, snapshot, info, now, scale)
     if view.unlockOpen then
       note(mode == "hard" and "Redeem the writ to permanently unlock Bloodbound and TOFS raid requests for the requester."
         or "On the first request, the raid leader hands in all four relics together to unlock Normal permanently.", "muted")
-      relics(info.relics, unlock)
+      relics(info.relics, unlock, inspectItems, scale)
     end
   end, scale)
   guideCard(view, info, false, scale)
   if vigil then
-    card("admission", 0, 150 * scale, function()
+    card("admission", 0, (inspectItems and 195 or 150) * scale, function()
       heading("Admission relics")
-      relics(Guide.normal.relics, unlock)
+      relics(Guide.normal.relics, unlock, inspectItems, scale)
     end)
   end
 end
@@ -421,7 +454,7 @@ local rewardText = {
   credit_required = "Boss credit required", relic_required = "Relic required",
 }
 
-local function copiumCard(view, list, detail, scale)
+local function copiumCard(view, list, detail, scale, inspectItems)
   local options = list.data and list.data.relics
   if type(options) ~= "table" or #options == 0 then
     card("copium-offline", 0, 101 * scale, function()
@@ -451,7 +484,7 @@ local function copiumCard(view, list, detail, scale)
   if not chosen then return end
   local relic = detail.data and detail.data.relic or chosen
   if relic.relicId ~= chosen.relicId then relic = chosen end
-  local height = 184 * scale
+  local height = (relic.relicName and 218 or 184) * scale
   groupCards("copium-status", height, function()
     note(relic.name, "gold")
     local label = "Redemption status unavailable"
@@ -465,6 +498,9 @@ local function copiumCard(view, list, detail, scale)
       {"Inventory", type(relic.quantity) == "number" and (relic.quantity .. " held") or "Unavailable"},
       {"Boss credit", creditText[relic.credit] or "Unavailable", relic.credit == "credited" and "good" or "muted"},
     })
+    if relic.relicName and not itemLink(relic.relicName, relic.relicId, "copium-relic", inspectItems and relic ~= chosen, scale) then
+      note(relic.relicName, "muted")
+    end
   end, "copium-credit", height, function()
     heading("Exact credit")
     note(relic.relicId == 170009 and "Successfully rescue Jelvan in Anguish."
@@ -475,20 +511,36 @@ local function copiumCard(view, list, detail, scale)
     })
   end, scale)
   local rewards = relic.rewards or {}
-  local columns = ui.GetContentRegionAvail() >= 560 * scale and 2 or 1
-  card("copium-rewards", 0, (105 + math.ceil(#rewards / columns) * 52) * scale, function()
+  local width = ui.GetContentRegionAvail()
+  local columns = width >= 560 * scale and 2 or 1
+  local cellWidth = (width - 29 * scale) / columns - 35 * scale
+  local rewardHeight = 105 * scale
+  for index = 1, #rewards, columns do
+    local rowHeight = 52 * scale
+    for current = index, math.min(index + columns - 1, #rewards) do
+      local item = rewards[current]
+      rowHeight = math.max(rowHeight, wrappedHeight(item.name, cellWidth)
+        + wrappedHeight(rewardText[item.availability], cellWidth) + 18 * scale)
+    end
+    rewardHeight = rewardHeight + rowHeight
+  end
+  card("copium-rewards", 0, rewardHeight, function()
     heading(#rewards > 0 and (#rewards .. " relic reward choices") or "Relic reward choices")
     if #rewards == 0 then
       note(detail.pending and "Checking reward choices." or "Reward choices are unavailable.", "muted")
       return
     end
-    note("Copium checks credit, inventory and lore conflicts when you claim a reward.", "muted")
+    note(inspectItems and "Select a reward to inspect its item stats."
+      or "Copium checks credit, inventory and lore conflicts when you claim a reward.", "muted")
     local flags = ui.TableFlags
     if ui.BeginTable("##journal-reward-table", columns, flags.BordersInnerH | flags.SizingStretchProp) then
+      for column = 1, columns do ui.TableSetupColumn("##reward-" .. column, 0, 1) end
       for index, reward in ipairs(rewards) do
         if (index - 1) % columns == 0 then ui.TableNextRow() end
         ui.TableNextColumn()
-        note((reward.name or "Item") .. (reward.itemId and " · " .. reward.itemId or ""))
+        if not itemLink(reward.name, reward.itemId, "copium-reward-" .. tostring(reward.itemId), inspectItems, scale) then
+          note(reward.name or "Item details unavailable")
+        end
         note(rewardText[reward.availability] or "Availability unknown",
           reward.availability == "available" and "good" or reward.availability == "lore_conflict" and "danger" or "muted")
       end
@@ -521,13 +573,9 @@ local function sleeperRows(snapshot, now)
   return values
 end
 
-local function featuredStatus(view, info, snapshot, now, scale)
+local function featuredStatusRows(info, snapshot, now)
   local data = snapshot.data or {}
-  local title, detail = Model.featuredHeadline(snapshot, now)
-  heading("Tonight")
-  featureHeading(title, scale)
-  note(detail, "muted")
-  if not snapshot.data then return end
+  if not snapshot.data then return {} end
 
   local saved, replay = Model.runLabels(snapshot, now)
   local access, tone = Model.featuredUnlock(data.unlock)
@@ -549,18 +597,7 @@ local function featuredStatus(view, info, snapshot, now, scale)
   elseif data.unlock and data.unlock.payment == "pending" then
     values[#values + 1] = {"Raid offering", "Pending. Ask Avel to confirm before giving more Splinters."}
   end
-  rows("featured-status-" .. view.mode, values)
-
-  if data.chapters and #data.chapters > 0 then
-    ui.Separator()
-    heading("Chapter access")
-    local chapters = {}
-    for _, chapter in ipairs(data.chapters) do
-      local label, chapterTone = Model.featuredUnlock(chapter)
-      chapters[#chapters + 1] = {chapter.name, label, chapterTone}
-    end
-    rows("featured-chapters", chapters)
-  end
+  return values
 end
 
 local function chapterRoster(view, snapshot, scale)
@@ -589,26 +626,63 @@ local function chapterRoster(view, snapshot, scale)
   return data.roster and data.roster.chapter == selected.name and data.roster or selected.roster
 end
 
-local function featuredPage(view, info, snapshot, now, scale, journal)
-  heading(info.zone .. " / " .. info.subtitle)
-  featureHeading(info.title, scale)
-  note(info.description, "muted")
-  if info.id == "sleepers" then
-    ui.Separator()
-    heading("Current phase")
-    rows("sleeper-phases", sleeperRows(snapshot, now))
-  elseif Model.liveMode(info.id) then
+local function featuredPage(view, info, snapshot, now, scale, journal, inspectItems)
+  local sleeper = info.id == "sleepers"
+  local live = Model.liveMode(info.id)
+  if live and not sleeper then
     tabs(view, snapshot, journal, now, scale, true)
     if view.tab == "roster" then
       rosterCard(snapshot, now, scale, info.id == "firefell" and chapterRoster(view, snapshot, scale) or nil, true)
       return
     end
-    featuredStatus(view, info, snapshot, now, scale)
   end
-  if #info.access > 0 then
-    ui.Separator()
+  local width = ui.GetContentRegionAvail()
+  local leftWidth, rightWidth, paired = pairedWidths(width, scale)
+  if not live then rightWidth = width end
+  local items = info.referenceItems or {}
+  local accessHeight = 67 * scale + wrappedHeight(info.description, rightWidth - 29 * scale) + rowsHeight(info.access, rightWidth, scale)
+  for _, item in ipairs(items) do
+    accessHeight = accessHeight + wrappedHeight(item.name, rightWidth - 56 * scale) + 12 * scale
+  end
+  local function access()
     heading("Entry & access")
-    rows("featured-access", info.access)
+    note(info.description, "muted")
+    if #info.access > 0 then rows("featured-access", info.access, true) end
+    for _, item in ipairs(items) do
+      if not itemLink(item.name, item.id, "entry-" .. item.id, inspectItems, scale) then note(item.name, "muted") end
+    end
+  end
+  if live then
+    local values = sleeper and sleeperRows(snapshot, now) or featuredStatusRows(info, snapshot, now)
+    local title, detail = Model.featuredHeadline(snapshot, now)
+    local statusHeight = (sleeper and 65 or 107) * scale + rowsHeight(values, leftWidth, scale)
+    if not sleeper then
+      statusHeight = statusHeight + wrappedHeight(title, leftWidth * .61) + wrappedHeight(detail, leftWidth - 29 * scale)
+    end
+    if paired then statusHeight = math.max(statusHeight, accessHeight); accessHeight = statusHeight end
+    groupCards("featured-tonight", statusHeight, function()
+      if sleeper then heading("Current phase")
+      else
+        heading("Tonight")
+        featureHeading(title, scale)
+        note(detail, "muted")
+      end
+      if #values > 0 then rows("featured-status-" .. view.mode, values, true) end
+    end, "featured-access", accessHeight, access, scale)
+  else
+    card("featured-access", 0, accessHeight, access)
+  end
+  local data = snapshot.data
+  if data and data.chapters and #data.chapters > 0 then
+    local chapters = {}
+    for _, chapter in ipairs(data.chapters) do
+      local label, tone = Model.featuredUnlock(chapter)
+      chapters[#chapters + 1] = {chapter.name, label, tone}
+    end
+    card("featured-chapters", 0, 58 * scale + rowsHeight(chapters, width, scale), function()
+      heading("Chapter access")
+      rows("featured-chapters", chapters, true)
+    end)
   end
   if #info.encounters > 0 then
     ui.Separator()
@@ -666,17 +740,19 @@ local function fitPreview(label, width)
 end
 
 local function expeditionSelector(view, width, scale)
-  local selectedId = view.mode == "hard" and "normal" or view.mode
-  local current = expeditionById[selectedId]
+  local current = expeditionByMode[view.mode]
   -- Keep room for the combo arrow and padding even when a catalog label is long.
-  local preview = fitPreview(current and current.label or "Choose expedition", width - 40 * scale)
+  local available = width - 40 * scale
+  local label = current and current.label or "Choose expedition"
+  if current and current.shortLabel and ui.CalcTextSize(label) > available then label = current.shortLabel end
+  local preview = fitPreview(label, available)
   note("EXPEDITIONS", "muted")
   ui.SetNextItemWidth(-1)
   if ui.BeginCombo("##journal-expedition-selector", preview) then
     for _, entry in ipairs(expeditions) do
-      local selected = entry.id == selectedId
+      local selected = entry == current
       if ui.Selectable(entry.label .. "##journal-expedition-" .. entry.id, selected) then
-        Model.navigate(view, entry.id == "normal" and view.raidMode or entry.id, true)
+        Model.navigate(view, entry.preference and view[entry.preference] or entry.id, true)
       end
       if selected then ui.SetItemDefaultFocus() end
     end
@@ -708,6 +784,7 @@ end
 
 function M.draw(view, window, journal, scale)
   local now = ui.GetTime()
+  local inspectItems = window.canInspectItem == true
   -- The gamepad pack can select a larger font at the same viewport scale.
   local _, lineHeight = ui.CalcTextSize("Ag")
   scale = math.max(scale, lineHeight / 15)
@@ -741,20 +818,20 @@ function M.draw(view, window, journal, scale)
       Library.detail(view, scale, libraryStyle)
     elseif view.mode == "library" then
       Library.list(view, scale, libraryStyle)
-    elseif featuredById[view.mode] then
-      featuredPage(view, featuredById[view.mode], snapshot, now, scale, journal)
     else
       modeBefore = view.mode
       hero(view, scale)
       if modeBefore ~= view.mode then snapshot, detail = Model.poll(view, window, journal, now) end
-      if view.mode == "copium" then
-        copiumCard(view, snapshot, detail, scale)
+      if featuredById[view.mode] then
+        featuredPage(view, featuredById[view.mode], snapshot, now, scale, journal, inspectItems)
+      elseif view.mode == "copium" then
+        copiumCard(view, snapshot, detail, scale, inspectItems)
       else
         local info = Guide[view.mode]
         tabs(view, snapshot, journal, now, scale)
         if view.tab == "roster" then rosterCard(snapshot, now, scale)
         elseif view.tab == "encounters" then guideCard(view, info, true, scale)
-        else overview(view, snapshot, info, now, scale) end
+        else overview(view, snapshot, info, now, scale, inspectItems) end
       end
     end
   end

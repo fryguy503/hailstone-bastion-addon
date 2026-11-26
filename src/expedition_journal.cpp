@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "expedition_journal.h"
 
+#include <algorithm>
+
 namespace bastion::journal {
 namespace {
 using Json = nlohmann::json;
@@ -14,12 +16,19 @@ constexpr std::uint64_t kRequestTimeoutMs = 6500;
 constexpr std::uint64_t kRequestSpacingMs = 1100;
 constexpr std::uint64_t kSnapshotLifeMs = 30000;
 constexpr std::uint64_t kContextPollMs = 250;
+// The published entry guides name these four keys, the shared Writ, and the ToFS offering.
+constexpr std::uint32_t kPublicItems[] = {147700, 147701, 147702, 147703, 147760, 148252};
 
 const Json& field(const Json& object, std::string_view name) {
     static const Json missing;
     if (!object.is_object()) return missing;
     const auto found = object.find(name);
     return found == object.end() ? missing : *found;
+}
+
+bool named_item(const Json& object, std::string_view id_key, std::string_view name_key, std::uint32_t id) {
+    const auto* name = field(object, name_key).get_ptr<const Json::string_t*>();
+    return name && !name->empty() && field(object, id_key) == id;
 }
 
 // The journal consumes read-only server snapshots. No response can provide an
@@ -307,6 +316,30 @@ void Adapter::write_snapshot(const Output& result, const Query& query) const {
     }
 }
 
+bool Adapter::can_inspect_item() const {
+    return shown_ && context_.has_value() && HAILSTONE_HOST_HAS(host_, inspect_item);
+}
+
+bool Adapter::inspect_item(std::uint32_t id) {
+    synchronize(true);
+    if (!can_inspect_item()) return false;
+    bool permitted = std::find(std::begin(kPublicItems), std::end(kPublicItems), id) != std::end(kPublicItems);
+    if (!permitted && wanted_.mode == Mode::Copium) {
+        const auto& entry = entries_[kRelicDetailIndex];
+        if (entry.relic == wanted_.relic && !entry.data.is_null() && now_ - entry.received_at < kSnapshotLifeMs) {
+            const auto& relic = field(entry.data, "relic");
+            permitted = named_item(relic, "relicId", "relicName", id);
+            const auto& rewards = field(relic, "rewards");
+            if (!permitted && rewards.is_array()) {
+                permitted = std::any_of(rewards.begin(), rewards.end(), [id](const auto& reward) {
+                    return named_item(reward, "itemId", "name", id);
+                });
+            }
+        }
+    }
+    return permitted && host_->inspect_item(host_->host, id, nullptr);
+}
+
 int Adapter::callback(void* user, const HailstoneArgs* args, HailstoneOut* out) noexcept {
     auto& self = *static_cast<Adapter*>(user);
     return services::guarded_ui(self.host_, [&] { return self.ui(args, out); });
@@ -320,6 +353,7 @@ int Adapter::ui(const HailstoneArgs* args, HailstoneOut* out) {
         result.begin();
         result.boolean("shown", shown_);
         result.boolean("connected", context_.has_value());
+        result.boolean("canInspectItem", can_inspect_item());
         if (context_) result.string("character", context_->name);
         result.identity("generation", generation_);
         result.identity("revision", revision_);
@@ -329,6 +363,10 @@ int Adapter::ui(const HailstoneArgs* args, HailstoneOut* out) {
     if (*action == "close") {
         close();
         return 1;
+    }
+    if (*action == "inspect_item") {
+        const auto id = services::decimal(host_, args, 1);
+        return id && *id > 0 && *id <= UINT32_MAX && inspect_item(static_cast<std::uint32_t>(*id)) ? 1 : 0;
     }
     const auto query = query_from(args);
     if (!query || !shown_) return 0;

@@ -48,7 +48,7 @@ end
 
 function M.new()
   return {
-    mode = "normal", raidMode = "normal", tab = "overview", snapshots = {},
+    mode = "normal", raidMode = "normal", tofsMode = "tofs_group", tab = "overview", snapshots = {},
     library = {query = "", zone = "", kind = "", page = 1},
   }
 end
@@ -66,6 +66,7 @@ function M.navigate(view, mode, resetTab)
   view.mode = mode
   view.encounter = nil
   if mode == "normal" or mode == "hard" then view.raidMode = mode end
+  if mode == "tofs_group" or mode == "tofs_raid" then view.tofsMode = mode end
   if resetTab then view.tab = "overview" end
   view.scroll = true
 end

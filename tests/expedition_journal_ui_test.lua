@@ -11,6 +11,7 @@ end
 local function fixtures()
   local relic = {
     relicId = 170009, name = "Jelvan", quantity = 1, credit = "credited",
+    relicName = "Relic of the Tormentors",
     achievementId = 1800100201, componentId = 1800200211, componentType = 1,
   }
   local detail = {}
@@ -18,6 +19,7 @@ local function fixtures()
   detail.rewards = {
     {itemId = 47308, name = "Bazu Claw Hammer", availability = "available"},
     {itemId = 47300, name = "Mask of Lament", availability = "lore_conflict"},
+    {itemId = 47301, availability = "unavailable"},
   }
   return {
     ["normal:0"] = {
@@ -55,7 +57,7 @@ end
 
 for _, pack in ipairs({"modern", "gamepad"}) do
   local draw, clicks, texts = nil, {}, {}
-  local selected, refreshed = {}, {}
+  local selected, refreshed, inspected, spells = {}, {}, {}, {}
   local snapshots, closed = 0, 0
   local search, combo, scroll, detailLoads = nil, nil, 0, 0
   local picker = "##journal-expedition-selector"
@@ -70,12 +72,14 @@ for _, pack in ipairs({"modern", "gamepad"}) do
     access = {{"Entry NPC", "The Observatory Keeper"}},
     encounters = {},
   }
-  local state = {shown = false, connected = true, character = "Journal Character", revision = "1", generation = "1"}
+  local state = {shown = false, connected = true, canInspectItem = true,
+    character = "Journal Character", revision = "1", generation = "1"}
   local data = fixtures()
   local plugin = {
     expedition_journal = function(op, mode, id)
       if op == "window" then return state end
       if op == "close" then state.shown = false; closed = closed + 1; return end
+      if op == "inspect_item" then inspected[#inspected + 1] = tonumber(mode); return end
       local key = mode .. ":" .. id
       if op == "select" then selected[#selected + 1] = key
       elseif op == "refresh" then refreshed[#refreshed + 1] = key
@@ -83,7 +87,11 @@ for _, pack in ipairs({"modern", "gamepad"}) do
       else error("Unexpected Expedition Journal operation " .. tostring(op)) end
     end,
   }
-  eq = {Plugin = function() return plugin end}
+  eq = {
+    Plugin = function() return plugin end,
+    SpellDetails = function(id) if id == 50903 then return "Spell Information  Dying-Light Frost" end end,
+    ShowSpell = function(id) spells[#spells + 1] = id end,
+  }
   local function buttonClicked(label)
     local id = label:match("##.*$")
     local click = clicks[label] or clicks[id]
@@ -153,6 +161,9 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   local function shows(value)
     return table.concat(texts, "\n"):find(value, 1, true) ~= nil
   end
+  local function showsTitle(value)
+    return table.concat(texts, " "):gsub("%s+", " "):find(value, 1, true) ~= nil
+  end
   local function click(label)
     clicks[label] = true
     frame()
@@ -181,8 +192,8 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   combo = picker
   frame()
   combo = nil
-  check(table.concat(expeditionItems, "|") == table.concat({"Mistmoore Eclipse", "Midnight Vigil", "ToFS Group",
-    "ToFS Raid", "ToV Broken Accord", "Firefell", "Sleeper's Tomb", future.label}, "|") and
+  check(table.concat(expeditionItems, "|") == table.concat({"Mistmoore Eclipse", "Midnight Vigil", "Tower of Frozen Shadow",
+    "ToV Broken Accord", "Firefell", "Sleeper's Tomb", future.label}, "|") and
     expeditionSelected == "Mistmoore Eclipse" and expeditionFocused == expeditionSelected and #selected == 1,
     "opening the expedition selector omitted a catalog row, lost the current page, or sent a request")
 
@@ -217,6 +228,11 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   check(shows("Exact credit") and shows("1800200211") and shows("Ready to visit Copium")
     and shows("Bazu Claw Hammer") and shows("Lore conflict"), "native Copium detail omitted credit or vendor choices")
   check(selected[#selected] == "copium:170009", "Copium picked the wrong relic detail")
+  click("##journal-item-copium-relic")
+  click("##journal-item-copium-reward-47308")
+  click("##journal-item-copium-reward-47301")
+  check(#inspected == 2 and inspected[1] == 170009 and inspected[2] == 47308,
+    "Copium did not inspect named items or allowed an unnamed item preview")
 
   local liveSnapshots, liveSelections = snapshots, #selected
   click("##journal-route-library")
@@ -250,6 +266,7 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   click("##journal-route-copium")
 
   state.generation, state.revision, state.connected = "2", "2", false
+  state.canInspectItem = false
   frame()
   check(shows("Live status unavailable") and shows("Redemption status unavailable") and not shows("1800200211"),
     "disconnected window retained old character credit or failed to identify the unavailable live status")
@@ -264,21 +281,34 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   check(shows("Lord Inquisitor Seru") and not shows("unavailable"), "disconnect disabled the native guide library")
 
   local offlineSnapshots, offlineSelections = snapshots, #selected
-  selectExpedition("tofs_group")
-  check(shows("The Seven Silences") and shows("3–6 characters") and shows("Keeper Avel Rimeglass"),
+  selectExpedition("tofs")
+  check(showsTitle("The Seven Silences") and shows("3–6 characters") and shows("Keeper Avel Rimeglass"),
     "narrow featured menu did not open the group guide with access requirements")
-  selectExpedition("tofs_raid")
-  check(shows("The Unwritten Hour") and shows("12–36 characters"), "ToFS raid reused group access requirements")
+  click("##journal-guide:featured:tofs-the-last-ember")
+  frame()
+  click("##journal-guide:spell:tofs-the-last-ember:1:50903")
+  check(shows("Dying-Light Frost") and #spells == 1 and spells[1] == 50903,
+    "the published encounter did not open its native spell record")
+  click("##journal-guide-back")
+  frame()
+  click("Raid##journal-mode")
+  frame()
+  check(showsTitle("The Unwritten Hour") and shows("12–36 characters"), "ToFS raid reused group access requirements")
+  combo = picker
+  frame()
+  combo = nil
+  check(expeditionSelected == "Tower of Frozen Shadow" and expeditionFocused == expeditionSelected,
+    "ToFS raid did not select the shared tower in the expedition selector")
   selectExpedition("broken_accord")
-  check(shows("The Broken Accord") and shows("Kreizenn"), "Broken Accord omitted raid encounter links")
+  check(showsTitle("The Broken Accord") and shows("Kreizenn"), "Broken Accord omitted raid encounter links")
   click("##journal-guide:featured:north-tov-broken-accord-kreizenn")
   frame()
   check(shows("Kreizenn") and shows("tribute drakes"), "featured encounter link did not open its full guide")
   click("##journal-guide-back")
   frame()
-  check(shows("The Broken Accord"), "featured encounter did not return to its previous page")
+  check(showsTitle("The Broken Accord"), "featured encounter did not return to its previous page")
   selectExpedition("firefell")
-  check(shows("The Ember Chronicle") and shows("Chronicler Sihra") and shows("Saved run"),
+  check(showsTitle("The Ember Chronicle") and shows("Chronicler Sihra") and shows("Saved run"),
     "Firefell omitted its entrance or chapter information")
   selectExpedition("sleepers")
   frame()
@@ -288,6 +318,7 @@ for _, pack in ipairs({"modern", "gamepad"}) do
 
   harness.width, harness.height = 1280, 900
   state.generation, state.revision, state.connected = "3", "3", true
+  state.canInspectItem = true
   frame()
   check(selected[#selected] == "sleepers:0" and shows("Public Tomb\n2.0") and
     shows("Your guild’s next Static Mode request\n1.0") and shows("Your saved run\n2.0") and shows("2h left"),
@@ -314,12 +345,15 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   frame()
   check(shows("tribute drakes") and snapshots == beforeGuideSnapshots and #selected == beforeGuideSelections,
     "opening a published guide issued another live query")
-  selectExpedition("tofs_group")
+  selectExpedition("tofs")
+  check(selected[#selected] == "tofs_raid:0" and showsTitle("The Unwritten Hour"),
+    "returning to the tower lost the remembered raid selection")
+  click("Group##journal-mode")
   check(selected[#selected] == "tofs_group:0" and shows("Rejoin your saved run") and shows("2h left") and shows("6h left"),
     "ToFS Group did not separate active rejoin from the replay lockout")
   click("Roster##journal-tab")
   check(shows("Assigned Group Member") and shows("Can rejoin"), "ToFS Group did not show assigned roster eligibility")
-  selectExpedition("tofs_raid")
+  click("Raid##journal-mode")
   check(selected[#selected] == "tofs_raid:0" and shows("2 of 3 held") and shows("Already paid")
     and shows("Resume in DZ Manager"), "ToFS Raid lost materials, paid retry, or distinct restore instructions")
   selectExpedition("firefell")

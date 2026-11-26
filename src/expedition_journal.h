@@ -54,6 +54,8 @@ private:
     void send_query();
     void changed();
     void write_snapshot(const services::Output& result, const Query& query) const;
+    bool can_inspect_item() const;
+    bool inspect_item(std::uint32_t id);
 
     const PluginHostApi* host_ = nullptr;
     bool selected_ = false;

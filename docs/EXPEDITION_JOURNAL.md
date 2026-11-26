@@ -6,10 +6,11 @@ native UI. Select an encounter in Normal or Bloodbound Mistmoore Eclipse or
 Midnight Vigil to open its full guide. The Encounter Library provides
 searchable published guides, with zone and encounter-type filters.
 
-Use the **Expedition** selector to switch between Mistmoore Eclipse, Midnight
-Vigil, the Tower of Frozen Shadow group and raid expeditions, the Broken
-Accord, Firefell, and Sleeper's Tomb. The Encounter Library and Copium tracker
-have their own shortcuts.
+Use the **Expeditions** selector to switch between Mistmoore Eclipse, Midnight
+Vigil, Tower of Frozen Shadow, the Broken Accord, Firefell, and Sleeper's Tomb.
+Choose **Group** or **Raid** in the Tower of Frozen Shadow banner. The journal
+remembers the last mode you selected there. The Encounter Library and Copium
+tracker have their own shortcuts.
 Sleeper's Tomb shows the public 1.0 or 2.0 phase separately from the next
 Static Mode phase for your guild and the phase of an assigned active run.
 ToFS, Broken Accord, and Firefell show personal entry checks, current replay,
@@ -23,6 +24,11 @@ Bastion zone connection. The server keeps authority for admission and claims.
 A game-server update with the journal quest handlers enables live status.
 Guide content stays available whenever the server can't supply a snapshot.
 Browsing guides does not request live character data.
+
+Select a linked entry item or Copium reward to open Hailstone's item display.
+An encounter guide can link a published ability to the native spell window
+when the installed game files resolve its exact spell ID. The written tactics
+remain available without a matching spell record.
 
 The add-on clears snapshots on character and zone changes. A status check is
 read-only, and a stale snapshot expires after 30 seconds. Use **Refresh** to
