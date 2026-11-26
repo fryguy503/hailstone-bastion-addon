@@ -22,7 +22,8 @@ public:
     bool open();
 
 private:
-    enum class Mode : std::uint16_t { Normal = 1, Bloodbound, Vigil, Copium };
+    enum class Mode : std::uint16_t { Normal = 1, Bloodbound, Vigil, Copium, Sleepers };
+    static constexpr std::size_t kRelicDetailIndex = static_cast<std::size_t>(Mode::Sleepers);
     struct Query {
         Mode mode;
         std::uint32_t relic = 0;
@@ -68,8 +69,8 @@ private:
     Query wanted_{Mode::Normal};
     std::optional<Query> queued_;
     std::optional<Pending> pending_;
-    // Three expedition modes, the Copium list, and one selected relic.
-    std::array<Entry, 5> entries_{};
+    // One slot per wire mode, followed by a slot for the selected Copium relic.
+    std::array<Entry, kRelicDetailIndex + 1> entries_{};
 };
 
 } // namespace bastion::journal

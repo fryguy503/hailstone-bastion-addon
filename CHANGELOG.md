@@ -1,5 +1,11 @@
 # Changes
 
+## 0.1.0-preview.17
+
+- Keep Mistmoore encounter columns equal and allow room for wrapped guide text.
+- Add journal shortcuts for the Tower of Frozen Shadow group and raid expeditions, the Broken Accord, Firefell, and Sleeper's Tomb.
+- Show the public Tomb phase, next Static Mode phase, and saved run phase when Bastion supplies them.
+
 ## 0.1.0-preview.16
 
 - Click an encounter in the Mistmoore guide to read its overview, mechanics, and role tips in the journal.

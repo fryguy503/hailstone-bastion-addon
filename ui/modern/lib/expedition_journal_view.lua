@@ -2,7 +2,10 @@
 local Model = dofile("lib/expedition_journal_state.lua")
 local Guide = dofile("lib/expedition_journal_catalog.lua")
 local Library = dofile("lib/expedition_journal_library.lua")
+local Featured = dofile("lib/expedition_journal_featured.lua")
 local M = {}
+local featuredById = {}
+for _, entry in ipairs(Featured) do featuredById[entry.id] = entry end
 
 local color = {
   bg = {.071, .075, .086, 1}, rail = {.090, .090, .102, 1},
@@ -267,19 +270,41 @@ local function relics(items, inventory)
 end
 
 local function guideCard(view, info, expanded, scale)
-  local mode = view.mode
+  local vigil = view.mode == "vigil"
   local width = ui.GetContentRegionAvail()
   local columns = width >= 560 * scale and 2 or 1
-  local encounterRows = math.ceil(#info.encounters / columns)
-  local height = (80 + encounterRows * 73 + (expanded and 48 or 0)) * scale
-  if width < 365 * scale then height = height + encounterRows * 28 * scale end
+  local intro = vigil and "Clear Mistmoore servants to recover four different relics for a first Normal raid request."
+    or "Clear each district to call out its guardian. The four districts can be tackled in any order."
+  local replay = vigil and "The replay timer begins when the group accepts the expedition."
+    or "A fresh request goes on a 72-hour replay timer once the roster seals."
+
+  -- Reserve the card's padding and each table cell's gutters before measuring wrapped rows.
+  local innerWidth = width - 28 * scale
+  local cellWidth = innerWidth / columns - 12 * scale
+  local _, lineHeight = ui.CalcTextSize("Ag")
+  local function textHeight(text, wrapWidth)
+    if ui.CalcTextSize(text) <= wrapWidth then return lineHeight end
+    return #wrapLines(text, math.max(1, wrapWidth), 1) * lineHeight
+  end
+  local height = math.max(80 * scale, textHeight(intro, innerWidth) + 60 * scale)
+  for index = 1, #info.encounters, columns do
+    local rowHeight = 73 * scale
+    for item = index, math.min(index + columns - 1, #info.encounters) do
+      local entry = info.encounters[item]
+      rowHeight = math.max(rowHeight, textHeight(entry[1], cellWidth - 28 * scale)
+        + textHeight(entry[2], cellWidth) + 36 * scale)
+    end
+    height = height + rowHeight
+  end
+  if expanded then height = height + math.max(48 * scale, textHeight(replay, innerWidth) + 10 * scale) end
+
   card("guide", 0, height, function()
-    local vigil = mode == "vigil"
     heading(expanded and not vigil and "Four district guardians" or "Quick encounter guide")
-    note(vigil and "Clear Mistmoore servants to recover four different relics for a first Normal raid request."
-      or "Clear each district to call out its guardian. The four districts can be tackled in any order.", "muted")
+    note(intro, "muted")
     local flags = ui.TableFlags
     if ui.BeginTable("##journal-guardian-table", columns, flags.SizingStretchProp) then
+      -- Full-width button and wrapped text measurements must not set the next frame's proportions.
+      for column = 1, columns do ui.TableSetupColumn("##guardian-" .. column, 0, 1) end
       for index, entry in ipairs(info.encounters) do
         if (index - 1) % columns == 0 then ui.TableNextRow() end
         ui.TableNextColumn()
@@ -293,11 +318,7 @@ local function guideCard(view, info, expanded, scale)
       end
       ui.EndTable()
     end
-    if expanded then
-      local replay = vigil and "The replay timer begins when the group accepts the expedition."
-        or "A fresh request goes on a 72-hour replay timer once the roster seals."
-      note(replay, "muted")
-    end
+    if expanded then note(replay, "muted") end
   end)
 end
 
@@ -464,11 +485,56 @@ local function copiumCard(view, list, detail, scale)
   end)
 end
 
+local function sleeperRows(snapshot, now)
+  local data = snapshot.data or {}
+  local unknown = snapshot.pending and "Checking…" or "Unavailable"
+  local function phase(value)
+    if value == "1.0" or value == "2.0" then return value end
+    return unknown
+  end
+  local rotation = Model.remaining(snapshot, data.nextRotationAt, now)
+  local nextLabel = data.rotation == "guildless" and "Your next Static Mode request" or "Your guild’s next Static Mode request"
+  local nextPhase = rotation and rotation <= 0 and "Refresh to check the new week" or phase(data.nextPhase)
+  local values = {{"Public Tomb", phase(data.publicPhase)}, {nextLabel, nextPhase}}
+  if data.rotation == "alternating" and rotation and rotation > 0 then
+    values[#values + 1] = {"Next guild rotation", Model.duration(rotation)}
+  elseif data.rotation == "locked" then
+    values[#values + 1] = {"Guild rotation", "Unlock by defeating two distinct original Warders"}
+  end
+  local saved = data.savedRun
+  if type(saved) == "table" and (saved.phase == "1.0" or saved.phase == "2.0") then
+    local remaining = Model.remaining(snapshot, saved.expiresAt, now)
+    if not remaining or remaining > 0 then values[#values + 1] = {"Your saved run", saved.phase} end
+  end
+  return values
+end
+
+local function featuredPage(view, info, snapshot, now, scale)
+  heading(info.zone .. " / " .. info.subtitle)
+  featureHeading(info.title, scale)
+  note(info.description, "muted")
+  if info.id == "sleepers" then
+    ui.Separator()
+    heading("Current phase")
+    rows("sleeper-phases", sleeperRows(snapshot, now))
+  end
+  if #info.access > 0 then
+    ui.Separator()
+    heading("Entry & access")
+    rows("featured-access", info.access)
+  end
+  if #info.encounters > 0 then
+    ui.Separator()
+    heading("Encounter guides")
+    Library.links(view, info.encounters, scale, libraryStyle)
+  end
+end
+
 local function header(view, window, journal, snapshot, detail, scale)
   local x, y = ui.GetCursorScreenPos()
   local width = ui.GetContentRegionAvail()
   local height = 36 * scale
-  local staticPage = view.mode == "library" or view.encounter ~= nil
+  local staticPage = not Model.liveMode(view.mode) or view.encounter ~= nil
   local refreshWidth = staticPage and 0 or buttonWidth("Refresh", 72, scale)
   local refreshX = x + width - refreshWidth - 8 * scale
   fill(x, y, width, height, color.chrome)
@@ -527,6 +593,26 @@ local function navigation(view, vertical, scale)
       Model.navigate(view, mode, true)
     end
   end
+  if vertical then
+    ui.Dummy(0, 14 * scale)
+    note("MORE EXPEDITIONS", "muted")
+    for _, entry in ipairs(Featured) do
+      if button(entry.label .. "##journal-featured-" .. entry.id, unit, 32 * scale, view.mode == entry.id) then
+        Model.navigate(view, entry.id, true)
+      end
+    end
+  else
+    local current = featuredById[view.mode]
+    ui.SetNextItemWidth(-1)
+    if ui.BeginCombo("##journal-featured", current and current.label or "More expeditions") then
+      for _, entry in ipairs(Featured) do
+        if ui.Selectable(entry.label .. "##journal-featured-" .. entry.id, view.mode == entry.id) then
+          Model.navigate(view, entry.id, true)
+        end
+      end
+      ui.EndCombo()
+    end
+  end
 end
 
 function M.draw(view, window, journal, scale)
@@ -542,6 +628,7 @@ function M.draw(view, window, journal, scale)
   header(view, window, journal, snapshot, detail, scale)
   local railWidth = math.max(buttonWidth("Mistmoore Eclipse", 156, scale),
     buttonWidth("Encounter Library", 156, scale)) + 26 * scale
+  for _, entry in ipairs(Featured) do railWidth = math.max(railWidth, buttonWidth(entry.label, 0, scale) + 26 * scale) end
   local vertical = width >= math.max(770 * scale, railWidth + 470 * scale)
   local modeBefore = view.mode
   if vertical then
@@ -565,6 +652,8 @@ function M.draw(view, window, journal, scale)
       Library.detail(view, scale, libraryStyle)
     elseif view.mode == "library" then
       Library.list(view, scale, libraryStyle)
+    elseif featuredById[view.mode] then
+      featuredPage(view, featuredById[view.mode], snapshot, now, scale)
     else
       modeBefore = view.mode
       hero(view, scale)

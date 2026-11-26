@@ -32,6 +32,8 @@ local function fixtures()
     ["vigil:0"] = {serverNow = 1000, unlock = {state = "not_required"}, run = {state = "none"}, replay = {state = "clear"}},
     ["copium:0"] = {serverNow = 1000, relics = {relic}},
     ["copium:170009"] = {serverNow = 1000, relic = detail},
+    ["sleepers:0"] = {serverNow = 1000, publicPhase = "2.0", nextPhase = "1.0", rotation = "alternating",
+      nextRotationAt = 8200, savedRun = {phase = "2.0", expiresAt = 1060}},
   }
 end
 
@@ -75,6 +77,21 @@ for _, pack in ipairs({"modern", "gamepad"}) do
     EndCombo = function() end,
   }
   local harness = setup(root, pack, ui, eq, check)
+  local guideTable, guideColumns, guideWeights = false, 0, {}
+  local beginTable, endTable, setupColumn = ui.BeginTable, ui.EndTable, ui.TableSetupColumn
+  function ui.BeginTable(id, columns, ...)
+    guideTable = id == "##journal-guardian-table"
+    if guideTable then guideColumns, guideWeights = columns, {} end
+    return beginTable(id, columns, ...)
+  end
+  function ui.TableSetupColumn(label, flags, weight)
+    if guideTable then guideWeights[#guideWeights + 1] = weight end
+    return setupColumn(label, flags, weight)
+  end
+  function ui.EndTable(...)
+    guideTable = false
+    return endTable(...)
+  end
   local packDofile = dofile
   dofile = function(path)
     if path:match("^lib/encounter_library/detail_") then detailLoads = detailLoads + 1 end
@@ -103,6 +120,8 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   check(shows("Last Eclipse") and shows("Rejoin your saved run") and shows("2h left") and shows("3d left"),
     "native overview lost the saved run or separate replay clock")
   check(shows("Archivist of the Eclipse") and shows("Huntmaster Draeven"), "native overview omitted the packaged guide")
+  check(guideColumns == 2 and #guideWeights == 2 and guideWeights[1] == 1 and guideWeights[2] == 1,
+    "wide guardian guide let content set unequal column widths")
   local initialSnapshots = snapshots
   for _ = 1, 20 do frame() end
   check(snapshots == initialSnapshots and #selected == 1, "stable native frames rebuilt the snapshot or sent requests")
@@ -179,9 +198,62 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   click("##journal-route-1")
   check(shows("Gravekeeper Vhal") and shows("Personal status and roster eligibility are unavailable."),
     "narrow offline journal lost its packaged guide or unavailable state")
+  check(guideColumns == 1 and #guideWeights == 1 and guideWeights[1] == 1,
+    "narrow guardian guide retained side-by-side columns")
   click("##journal-route-4")
   frame()
   check(shows("Lord Inquisitor Seru") and not shows("unavailable"), "disconnect disabled the native guide library")
+
+  local offlineSnapshots, offlineSelections = snapshots, #selected
+  combo = "##journal-featured"
+  click("##journal-featured-tofs_group")
+  check(shows("The Seven Silences") and shows("3–6 characters") and shows("Keeper Avel Rimeglass"),
+    "narrow featured menu did not open the group guide with access requirements")
+  click("##journal-featured-tofs_raid")
+  check(shows("The Unwritten Hour") and shows("12–36 characters"), "ToFS raid reused group access requirements")
+  click("##journal-featured-broken_accord")
+  check(shows("The Broken Accord") and shows("Kreizenn"), "Broken Accord omitted raid encounter links")
+  combo = nil
+  click("##journal-guide:featured:north-tov-broken-accord-kreizenn")
+  frame()
+  check(shows("Kreizenn") and shows("tribute drakes"), "featured encounter link did not open its full guide")
+  click("##journal-guide-back")
+  frame()
+  check(shows("The Broken Accord"), "featured encounter did not return to its previous page")
+  combo = "##journal-featured"
+  click("##journal-featured-firefell")
+  check(shows("The Ember Chronicle") and shows("Chronicler Sihra") and shows("Saved run"),
+    "Firefell omitted its entrance or chapter information")
+  click("##journal-featured-sleepers")
+  combo = nil
+  frame()
+  check(shows("Public Tomb\nUnavailable") and shows("Sentinel of the Ages") and not shows("Your saved run"),
+    "offline Sleeper page guessed the public phase or hid the guide")
+  check(snapshots == offlineSnapshots and #selected == offlineSelections, "offline featured navigation made live requests")
+
+  harness.width, harness.height = 1280, 900
+  state.generation, state.revision, state.connected = "3", "3", true
+  frame()
+  check(selected[#selected] == "sleepers:0" and shows("Public Tomb\n2.0") and
+    shows("Your guild’s next Static Mode request\n1.0") and shows("Your saved run\n2.0") and shows("2h left"),
+    "Sleeper page conflated the public, next guild, or saved phase")
+  click("Refresh##journal-status")
+  check(refreshed[#refreshed] == "sleepers:0", "Sleeper refresh did not target phase status")
+  harness.frame = harness.frame + 61 * 60
+  frame()
+  check(not shows("Your saved run"), "Sleeper page displayed an expired saved run")
+  data["sleepers:0"] = {serverNow = 2000, nextPhase = "1.0", rotation = "guildless"}
+  state.revision = "4"
+  frame()
+  check(shows("Public Tomb\nUnavailable") and shows("Your next Static Mode request\n1.0"),
+    "partial Sleeper status guessed the public version or implied guild membership")
+  local beforeGuideSnapshots, beforeGuideSelections = snapshots, #selected
+  combo = "##journal-featured"
+  click("##journal-featured-broken_accord")
+  combo = nil
+  frame()
+  check(shows("Combat tuning") and shows("24–36 level-60 characters") and snapshots == beforeGuideSnapshots
+    and #selected == beforeGuideSelections, "reading a featured guide requested live status")
   harness.close = true
   frame()
   check(closed == 1 and not state.shown, "native window close did not retire the view")

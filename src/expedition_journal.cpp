@@ -153,18 +153,19 @@ std::string_view Adapter::mode_name(Mode mode) {
         case Mode::Bloodbound: return "hard";
         case Mode::Vigil: return "vigil";
         case Mode::Copium: return "copium";
+        case Mode::Sleepers: return "sleepers";
     }
     return {};
 }
 
 std::size_t Adapter::index(const Query& query) {
-    return query.relic ? 4 : static_cast<std::size_t>(query.mode) - 1;
+    return query.relic ? kRelicDetailIndex : static_cast<std::size_t>(query.mode) - 1;
 }
 
 std::optional<Adapter::Query> Adapter::query_from(const HailstoneArgs* args) const {
     const auto name = services::argument(host_, args, 1, 8);
     if (!name) return std::nullopt;
-    for (const auto mode : {Mode::Normal, Mode::Bloodbound, Mode::Vigil, Mode::Copium}) {
+    for (const auto mode : {Mode::Normal, Mode::Bloodbound, Mode::Vigil, Mode::Copium, Mode::Sleepers}) {
         if (*name != mode_name(mode)) continue;
         std::uint64_t relic = 0;
         HailstoneValue argument{};

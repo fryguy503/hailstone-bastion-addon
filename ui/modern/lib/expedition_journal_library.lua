@@ -49,6 +49,18 @@ function M.open(view, slug)
   view.scroll = true
 end
 
+function M.links(view, slugs, scale, style)
+  loadCatalog()
+  for _, slug in ipairs(slugs) do
+    local entry = bySlug[slug]
+    if entry then
+      ui.Separator()
+      if style.guideButton(entry.title, "featured:" .. slug, scale) then M.open(view, slug) end
+      style.note(entry.summary, "muted")
+    end
+  end
+end
+
 local function selectFilter(id, current, all, values, name)
   local selected = current
   if ui.BeginCombo("##" .. id, current == "" and all or name(current)) then

@@ -23,6 +23,10 @@ local reasons = {
 
 local function key(mode, id) return mode .. ":" .. tostring(id or 0) end
 
+function M.liveMode(mode)
+  return mode == "normal" or mode == "hard" or mode == "vigil" or mode == "copium" or mode == "sleepers"
+end
+
 function M.new()
   return {
     mode = "normal", raidMode = "normal", tab = "overview", snapshots = {},
@@ -55,7 +59,7 @@ function M.poll(view, window, journal, now)
     view.revision = window.revision
     view.snapshots = {}
   end
-  if not window.connected or view.mode == "library" or view.encounter then return {}, {} end
+  if not window.connected or not M.liveMode(view.mode) or view.encounter then return {}, {} end
 
   local function snapshot(id)
     local k = key(view.mode, id)

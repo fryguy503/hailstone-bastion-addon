@@ -151,6 +151,23 @@ void snapshots() {
           "selected relic data did not reach the native UI");
     check(rig.call({"snapshot", "copium"})["data"]["relics"][0] == row,
           "a relic detail invalidated its list");
+
+    rig.call({"select", "sleepers", "170009"}, false);
+    rig.call({"select", "sleepers"});
+    rig.now += 1100;
+    rig.journal.pulse();
+    hailstone::ByteReader sleepers(rig.sent.back().bytes);
+    sleepers.skip(6);
+    check(sleepers.le<std::uint16_t>() == 5, "Sleeper phase used the wrong mode");
+    sleepers.skip(4);
+    check(sleepers.le<std::uint32_t>() == 0, "Sleeper phase sent a relic identifier");
+    const Json phases{{"publicPhase", "2.0"}, {"nextPhase", "1.0"}, {"rotation", "alternating"},
+                      {"savedRun", {{"phase", "2.0"}, {"expiresAt", 1700000400}}}};
+    rig.receive(rig.reply("sleepers", phases));
+    check(rig.call({"snapshot", "sleepers"})["data"] == phases, "Sleeper phases did not reach the native UI");
+    check(rig.call({"snapshot", "copium", "170009"})["data"]["relic"] == row,
+          "Sleeper status replaced the selected Copium relic cache");
+
     rig.now += 30000;
     rig.journal.pulse();
     check(!rig.call({"snapshot", "normal"}).contains("data"), "expired availability was retained");
