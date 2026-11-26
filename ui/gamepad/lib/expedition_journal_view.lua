@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: MIT
 local Model = dofile("lib/expedition_journal_state.lua")
 local Guide = dofile("lib/expedition_journal_catalog.lua")
+local Library = dofile("lib/expedition_journal_library.lua")
 local M = {}
 
 local color = {
@@ -83,11 +84,7 @@ local function heading(title)
   ui.PopFont()
 end
 
-local function featureHeading(title, scale)
-  local width = ui.GetContentRegionAvail()
-  local size = 23 * scale
-  local _, baseHeight = ui.CalcTextSize("Ag")
-  local ratio = size / math.max(1, baseHeight)
+local function wrapLines(title, width, ratio)
   local lines, current = {}, ""
   for word in title:gmatch("%S+") do
     local nextLine = current == "" and word or current .. " " .. word
@@ -99,10 +96,35 @@ local function featureHeading(title, scale)
     end
   end
   lines[#lines + 1] = current
+  return lines
+end
+
+local function featureHeading(title, scale)
+  local width = ui.GetContentRegionAvail()
+  local size = 23 * scale
+  local _, baseHeight = ui.CalcTextSize("Ag")
+  local lines = wrapLines(title, width, size / math.max(1, baseHeight))
   local x, y = ui.GetCursorScreenPos()
   drawText(x, y, table.concat(lines, "\n"), color.bright, size)
   ui.Dummy(0, #lines * size + 2 * scale)
 end
+
+local function guideButton(title, id, scale)
+  local x, y = ui.GetCursorScreenPos()
+  local width = ui.GetContentRegionAvail()
+  local _, lineHeight = ui.CalcTextSize("Ag")
+  local lines = wrapLines(title, width - 28 * scale, 1)
+  local height = #lines * lineHeight + 8 * scale
+  local clicked = ui.Selectable("##journal-guide:" .. id, false, 0, width, height)
+  ui.PushClipRect(x, y, x + width, y + height, true)
+  drawText(x + 5 * scale, y + 4 * scale, table.concat(lines, "\n"), color.gold)
+  drawText(x + width - 14 * scale, y + 4 * scale, "›", color.gold)
+  ui.PopClipRect()
+  return clicked
+end
+
+local libraryStyle = {button = button, featureHeading = featureHeading, guideButton = guideButton,
+  heading = heading, note = note}
 
 local function rows(id, values)
   local flags = ui.TableFlags
@@ -244,12 +266,13 @@ local function relics(items, inventory)
   end
 end
 
-local function guideCard(mode, info, expanded, scale)
+local function guideCard(view, info, expanded, scale)
+  local mode = view.mode
   local width = ui.GetContentRegionAvail()
   local columns = width >= 560 * scale and 2 or 1
   local encounterRows = math.ceil(#info.encounters / columns)
-  local height = (80 + encounterRows * 64 + (expanded and 48 or 0)) * scale
-  if width < 365 * scale then height = height + encounterRows * 20 * scale end
+  local height = (80 + encounterRows * 73 + (expanded and 48 or 0)) * scale
+  if width < 365 * scale then height = height + encounterRows * 28 * scale end
   card("guide", 0, height, function()
     local vigil = mode == "vigil"
     heading(expanded and not vigil and "Four district guardians" or "Quick encounter guide")
@@ -260,7 +283,11 @@ local function guideCard(mode, info, expanded, scale)
       for index, entry in ipairs(info.encounters) do
         if (index - 1) % columns == 0 then ui.TableNextRow() end
         ui.TableNextColumn()
-        note(entry[1], "gold")
+        if entry[3] and entry[3] ~= "" then
+          if guideButton(entry[1], "expedition:" .. entry[3], scale) then Library.open(view, entry[3]) end
+        else
+          note(entry[1], "gold")
+        end
         note(entry[2], "muted")
         ui.Dummy(0, 5 * scale)
       end
@@ -310,7 +337,7 @@ local function overview(view, snapshot, info, now, scale)
       relics(info.relics, unlock)
     end
   end, scale)
-  guideCard(mode, info, false, scale)
+  guideCard(view, info, false, scale)
   if vigil then
     card("admission", 0, 150 * scale, function()
       heading("Admission relics")
@@ -441,32 +468,38 @@ local function header(view, window, journal, snapshot, detail, scale)
   local x, y = ui.GetCursorScreenPos()
   local width = ui.GetContentRegionAvail()
   local height = 36 * scale
-  local refreshWidth = buttonWidth("Refresh", 72, scale)
+  local staticPage = view.mode == "library" or view.encounter ~= nil
+  local refreshWidth = staticPage and 0 or buttonWidth("Refresh", 72, scale)
   local refreshX = x + width - refreshWidth - 8 * scale
   fill(x, y, width, height, color.chrome)
   line(x, y + height - 1, width, color.line)
   drawText(x + 12 * scale, y + 11 * scale, "Expedition Journal", color.text, 14 * scale)
-  local status = snapshot.data and (window.character or snapshot.data.character or "Live character")
-    or snapshot.pending and "Checking character" or "Guide only"
+  local status = staticPage and "Encounter guides"
+    or snapshot.data and (window.character or snapshot.data.character or "Live character")
+    or snapshot.pending and "Checking character" or "Live status unavailable"
   if width >= 460 * scale then
-    local sx = refreshX - 140 * scale
+    local statusWidth = ui.CalcTextSize(status) + 20 * scale
+    local sx = refreshX - statusWidth
     ui.DrawCircleFilled(sx, y + 18 * scale, 3 * scale, color.gold[1], color.gold[2], color.gold[3], .9)
     ui.PushClipRect(sx + 8 * scale, y, refreshX - 8 * scale, y + height, true)
     drawText(sx + 9 * scale, y + 12 * scale, status, color.muted, 12 * scale)
     ui.PopClipRect()
   end
-  ui.SetCursorScreenPos(refreshX, y + 5 * scale)
-  ui.BeginDisabled(not window.connected or snapshot.pending == true or detail.pending == true)
-  if button("Refresh##journal-status", refreshWidth, 26 * scale) then Model.refresh(view, journal) end
-  ui.EndDisabled()
+  if not staticPage then
+    ui.SetCursorScreenPos(refreshX, y + 5 * scale)
+    ui.BeginDisabled(not window.connected or snapshot.pending == true or detail.pending == true)
+    if button("Refresh##journal-status", refreshWidth, 26 * scale) then Model.refresh(view, journal) end
+    ui.EndDisabled()
+  end
   ui.SetCursorScreenPos(x, y + height - 1)
   ui.Dummy(width, 1)
 end
 
 local routes = {
-  {"Mistmoore Eclipse", "raidMode"},
-  {"Midnight Vigil", "vigil"},
-  {"Copium tracker", "copium"},
+  {"Encounter Library", "library", "Library", 4, "GUIDES"},
+  {"Mistmoore Eclipse", "raidMode", "Eclipse", 1, "CASTLE MISTMOORE"},
+  {"Midnight Vigil", "vigil", "Vigil", 2},
+  {"Copium tracker", "copium", "Copium", 3, "REWARDS"},
 }
 
 local function navigation(view, vertical, scale)
@@ -475,21 +508,22 @@ local function navigation(view, vertical, scale)
   if vertical then
     local _, height = ui.GetContentRegionAvail()
     fill(x, y, width, height, color.rail)
-    note("CASTLE MISTMOORE", "muted")
   end
-  local unit = vertical and width or math.max(40 * scale, (width - 16 * scale) / #routes)
+  local minimum = buttonWidth("Library", 0, scale)
+  local columns = width >= 4 * minimum + 24 * scale and 4 or 2
+  local unit = vertical and width or math.max(1, (width - (columns - 1) * 8 * scale) / columns)
   for index, route in ipairs(routes) do
-    if not vertical and index > 1 then ui.SameLine() end
-    if vertical and index == 3 then
-      ui.Dummy(0, 14 * scale)
-      note("REWARDS", "muted")
+    if not vertical and (index - 1) % columns ~= 0 then ui.SameLine() end
+    if vertical and route[5] then
+      if index > 1 then ui.Dummy(0, 14 * scale) end
+      note(route[5], "muted")
     end
     local title = route[1]
     if not vertical and unit < buttonWidth(title, 0, scale) then
-      title = ({"Eclipse", "Vigil", "Copium"})[index]
+      title = route[3]
     end
     local mode = route[2] == "raidMode" and view.raidMode or route[2]
-    if button(title .. "##journal-route-" .. index, unit, 32 * scale, mode == view.mode) then
+    if button(title .. "##journal-route-" .. route[4], unit, 32 * scale, mode == view.mode) then
       Model.navigate(view, mode, true)
     end
   end
@@ -506,7 +540,8 @@ function M.draw(view, window, journal, scale)
   fill(x, y, width, height, color.bg)
   local snapshot, detail = Model.poll(view, window, journal, now)
   header(view, window, journal, snapshot, detail, scale)
-  local railWidth = buttonWidth("Mistmoore Eclipse", 156, scale) + 26 * scale
+  local railWidth = math.max(buttonWidth("Mistmoore Eclipse", 156, scale),
+    buttonWidth("Encounter Library", 156, scale)) + 26 * scale
   local vertical = width >= math.max(770 * scale, railWidth + 470 * scale)
   local modeBefore = view.mode
   if vertical then
@@ -521,18 +556,28 @@ function M.draw(view, window, journal, scale)
   if modeBefore ~= view.mode then snapshot, detail = Model.poll(view, window, journal, now) end
   local bodyColor = setColor("ChildBg", color.bg)
   if ui.BeginChild("##journal-page", 0, 0, true) then
-    if view.scroll then ui.SetScrollY(0); view.scroll = false end
-    modeBefore = view.mode
-    hero(view, scale)
-    if modeBefore ~= view.mode then snapshot, detail = Model.poll(view, window, journal, now) end
-    if view.mode == "copium" then
-      copiumCard(view, snapshot, detail, scale)
+    if view.scroll then
+      ui.SetScrollY(type(view.scroll) == "number" and view.scroll or 0)
+      view.scroll = false
+    end
+    view.pageScrollY = ui.GetScrollY()
+    if view.encounter then
+      Library.detail(view, scale, libraryStyle)
+    elseif view.mode == "library" then
+      Library.list(view, scale, libraryStyle)
     else
-      local info = Guide[view.mode]
-      tabs(view, snapshot, journal, now, scale)
-      if view.tab == "roster" then rosterCard(snapshot, now, scale)
-      elseif view.tab == "encounters" then guideCard(view.mode, info, true, scale)
-      else overview(view, snapshot, info, now, scale) end
+      modeBefore = view.mode
+      hero(view, scale)
+      if modeBefore ~= view.mode then snapshot, detail = Model.poll(view, window, journal, now) end
+      if view.mode == "copium" then
+        copiumCard(view, snapshot, detail, scale)
+      else
+        local info = Guide[view.mode]
+        tabs(view, snapshot, journal, now, scale)
+        if view.tab == "roster" then rosterCard(snapshot, now, scale)
+        elseif view.tab == "encounters" then guideCard(view, info, true, scale)
+        else overview(view, snapshot, info, now, scale) end
+      end
     end
   end
   ui.EndChild()

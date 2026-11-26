@@ -24,7 +24,10 @@ local reasons = {
 local function key(mode, id) return mode .. ":" .. tostring(id or 0) end
 
 function M.new()
-  return {mode = "normal", raidMode = "normal", tab = "overview", snapshots = {}}
+  return {
+    mode = "normal", raidMode = "normal", tab = "overview", snapshots = {},
+    library = {query = "", zone = "", kind = "", page = 1},
+  }
 end
 
 function M.reset(view)
@@ -37,6 +40,7 @@ end
 
 function M.navigate(view, mode, resetTab)
   view.mode = mode
+  view.encounter = nil
   if mode == "normal" or mode == "hard" then view.raidMode = mode end
   if resetTab then view.tab = "overview" end
   view.scroll = true
@@ -51,7 +55,7 @@ function M.poll(view, window, journal, now)
     view.revision = window.revision
     view.snapshots = {}
   end
-  if not window.connected then return {}, {} end
+  if not window.connected or view.mode == "library" or view.encounter then return {}, {} end
 
   local function snapshot(id)
     local k = key(view.mode, id)

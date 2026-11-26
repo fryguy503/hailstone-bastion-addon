@@ -41,7 +41,7 @@ def render(catalog: dict) -> str:
             lines.append(f"      {{id = {item['id']}, name = {lua(item['name'])}}},")
         lines.extend(("    },", "    encounters = {"))
         for encounter in guide:
-            lines.append(f"      {{{lua(encounter['title'])}, {lua(encounter['summary'])}}},")
+            lines.append(f"      {{{lua(encounter['title'])}, {lua(encounter['summary'])}, {lua(encounter['slug'])}}},")
         lines.extend(("    },", "  },"))
     lines.extend(("}", ""))
     return "\n".join(lines)

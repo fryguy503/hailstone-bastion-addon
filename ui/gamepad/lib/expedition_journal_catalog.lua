@@ -17,10 +17,10 @@ return {
       {id = 147703, name = "Canticle of the Stolen Dawn"},
     },
     encounters = {
-      {"Gravekeeper Vhal", "Leave the ring of blood before it erupts, then return to the Gravekeeper."},
-      {"Castellan Veyr", "Separate the branded raider from the group before the following blast erupts."},
-      {"Huntmaster Draeven", "Control the risen shades and defeat them before the eclipse renews them."},
-      {"Cantor Selindra", "Gather close to the Cantor before the surrounding shadows strike."},
+      {"Gravekeeper Vhal", "Leave the ring of blood before it erupts, then return to the Gravekeeper.", "gravekeeper-vhal"},
+      {"Castellan Veyr", "Separate the branded raider from the group before the following blast erupts.", "castellan-veyr"},
+      {"Huntmaster Draeven", "Control the risen shades and defeat them before the eclipse renews them.", "huntmaster-draeven"},
+      {"Cantor Selindra", "Gather close to the Cantor before the surrounding shadows strike.", "cantor-selindra"},
     },
   },
   hard = {
@@ -35,10 +35,10 @@ return {
       {id = 147760, name = "Blood-Sealed Writ of the Last Eclipse"},
     },
     encounters = {
-      {"Gravekeeper Vhal (Bloodbound)", "Retreat from Vhal, then reverse course when his second warning calls the raid back into shelter."},
-      {"Castellan Veyr (Bloodbound)", "Separate the branded raider, then pull everyone clear of Veyr when the blood rite reverses."},
-      {"Huntmaster Draeven (Bloodbound)", "Break the blood pack that shields Draeven, then spread from the hunter's branded prey."},
-      {"Cantor Selindra (Bloodbound)", "Gather inside Selindra's shelter, then retreat when her second refrain turns that shelter into danger."},
+      {"Gravekeeper Vhal (Bloodbound)", "Retreat from Vhal, then reverse course when his second warning calls the raid back into shelter.", "bloodbound-gravekeeper-vhal"},
+      {"Castellan Veyr (Bloodbound)", "Separate the branded raider, then pull everyone clear of Veyr when the blood rite reverses.", "bloodbound-castellan-veyr"},
+      {"Huntmaster Draeven (Bloodbound)", "Break the blood pack that shields Draeven, then spread from the hunter's branded prey.", "bloodbound-huntmaster-draeven"},
+      {"Cantor Selindra (Bloodbound)", "Gather inside Selindra's shelter, then retreat when her second refrain turns that shelter into danger.", "bloodbound-cantor-selindra"},
     },
   },
   vigil = {
@@ -52,7 +52,7 @@ return {
     relics = {
     },
     encounters = {
-      {"The Archivist's Midnight Vigil", "Explore Mistmoore with a small group, defeat its servants and recover forbidden relics during the Archivist’s Midnight Vigil."},
+      {"The Archivist's Midnight Vigil", "Explore Mistmoore with a small group, defeat its servants and recover forbidden relics during the Archivist’s Midnight Vigil.", "mistmoore-the-archivist-s-midnight-vigil"},
     },
   },
 }

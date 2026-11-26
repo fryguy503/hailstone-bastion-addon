@@ -39,6 +39,7 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   local draw, clicks, texts = nil, {}, {}
   local selected, refreshed = {}, {}
   local snapshots, closed = 0, 0
+  local search, combo, scroll, detailLoads = nil, nil, 0, 0
   local state = {shown = false, connected = true, character = "Journal Character", revision = "1", generation = "1"}
   local data = fixtures()
   local plugin = {
@@ -53,24 +54,32 @@ for _, pack in ipairs({"modern", "gamepad"}) do
     end,
   }
   eq = {Plugin = function() return plugin end}
+  local function buttonClicked(label)
+    local id = label:match("##.*$")
+    local click = clicks[label] or clicks[id]
+    clicks[label] = nil
+    if id then clicks[id] = nil end
+    return click
+  end
   ui = {
     window = function(_, fn) draw = fn end,
     Begin = function() return true, true end, End = function() end,
     BeginChild = function() return true end, EndChild = function() end,
     TextWrapped = function(text) texts[#texts + 1] = text end,
-    Button = function(label)
-      local id = label:match("##.*$")
-      local click = clicks[label] or clicks[id]
-      clicks[label] = nil
-      if id then clicks[id] = nil end
-      return click
-    end,
+    Button = buttonClicked, Selectable = buttonClicked,
     SameLine = function() end,
-    SetScrollY = function() end,
-    BeginCombo = function() return false end,
+    SetScrollY = function(value) scroll = value end,
+    GetScrollY = function() return scroll end,
+    InputTextWithHint = function(_, _, value) return search or value end,
+    BeginCombo = function(id) return id == combo end,
     EndCombo = function() end,
   }
   local harness = setup(root, pack, ui, eq, check)
+  local packDofile = dofile
+  dofile = function(path)
+    if path:match("^lib/encounter_library/detail_") then detailLoads = detailLoads + 1 end
+    return packDofile(path)
+  end
   dofile(root .. "/ui/" .. pack .. "/expedition_journal.lua")
   local function frame()
     texts = {}
@@ -97,6 +106,18 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   local initialSnapshots = snapshots
   for _ = 1, 20 do frame() end
   check(snapshots == initialSnapshots and #selected == 1, "stable native frames rebuilt the snapshot or sent requests")
+  check(detailLoads == 0, "overview eagerly loaded encounter details")
+
+  scroll = 124
+  click("##journal-guide:expedition:gravekeeper-vhal")
+  frame()
+  check(shows("Ring of Blood") and shows("Break the Grave Seal") and shows("Tanks") and shows("Stay in the battle"),
+    "Mistmoore guardian did not open its published ability, phase, role, and encounter notes")
+  check(detailLoads == 1 and snapshots == initialSnapshots and #selected == 1,
+    "native guardian details required a live query or repeatedly loaded their data")
+  click("Back to expedition##journal-guide-back")
+  frame()
+  check(shows("Rejoin your saved run") and scroll == 124, "guardian back did not restore the expedition and scroll")
 
   click("Roster##journal-tab")
   check(shows("Journal Member · Leader") and shows("Can rejoin"), "saved run roster omitted the named leader or eligibility")
@@ -119,13 +140,48 @@ for _, pack in ipairs({"modern", "gamepad"}) do
     and shows("Bazu Claw Hammer") and shows("Lore conflict"), "native Copium detail omitted credit or vendor choices")
   check(selected[#selected] == "copium:170009", "Copium picked the wrong relic detail")
 
+  local liveSnapshots, liveSelections = snapshots, #selected
+  click("##journal-route-4")
+  frame()
+  check(shows("Encounter Library") and shows("Acrylia Caverns") and shows("Anguish, the Fallen Palace"),
+    "native library omitted published encounters from multiple zones")
+  click("Next##journal-library-next")
+  check(shows("13–24 of") and not shows("Acrylia Caverns"), "library could not advance through more encounters")
+  search = "sERu lord"
+  frame()
+  check(shows("Lord Inquisitor Seru") and shows("1–1 of 1 encounters"), "search failed to match terms across the encounter index")
+  combo = "##journal-library-kind"
+  click("Event##journal-library-kind:event")
+  check(shows("No encounters match these filters."), "encounter-type filter did not narrow the search results")
+  click("Raid##journal-library-kind:raid")
+  combo = "##journal-library-zone"
+  click("Acrylia Caverns##journal-library-zone:Acrylia Caverns")
+  check(shows("No encounters match these filters."), "zone filter did not narrow the search results")
+  click("Sanctus Seru##journal-library-zone:Sanctus Seru")
+  combo = nil
+  check(shows("Lord Inquisitor Seru") and shows("1–1 of 1 encounters"), "zone and raid filters lost the matching encounter")
+  click("##journal-guide:library:sseru-lord-inquisitor-seru")
+  frame()
+  check(shows("Encounter plan") and shows("Lord Inquisitor Seru") and shows("Role tips") and detailLoads == 2,
+    "native library did not load the selected encounter detail lazily")
+  click("Back to encounters##journal-guide-back")
+  search = nil
+  frame()
+  check(shows("1–1 of 1 encounters") and snapshots == liveSnapshots and #selected == liveSelections,
+    "returning to the library lost filters or requested live expedition state")
+  click("##journal-route-3")
+
   state.generation, state.revision, state.connected = "2", "2", false
   frame()
-  check(shows("Redemption status unavailable") and not shows("1800200211"), "disconnected window retained old character credit")
+  check(shows("Live status unavailable") and shows("Redemption status unavailable") and not shows("1800200211"),
+    "disconnected window retained old character credit or failed to identify the unavailable live status")
   harness.width, harness.height = 420, 900
   click("##journal-route-1")
   check(shows("Gravekeeper Vhal") and shows("Personal status and roster eligibility are unavailable."),
     "narrow offline journal lost its packaged guide or unavailable state")
+  click("##journal-route-4")
+  frame()
+  check(shows("Lord Inquisitor Seru") and not shows("unavailable"), "disconnect disabled the native guide library")
   harness.close = true
   frame()
   check(closed == 1 and not state.shown, "native window close did not retire the view")

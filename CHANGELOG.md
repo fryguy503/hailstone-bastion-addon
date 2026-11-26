@@ -1,5 +1,10 @@
 # Changes
 
+## 0.1.0-preview.16
+
+- Click an encounter in the Mistmoore guide to read its overview, mechanics, and role tips in the journal.
+- Browse the bundled Bastion Encounter Library. Search or filter by zone and encounter type.
+
 ## 0.1.0-preview.15
 
 - Make the Expedition Journal native in both Modern and Gamepad. The eclipse layout, encounter guides, roster, and Copium tracker open directly in the client UI.
