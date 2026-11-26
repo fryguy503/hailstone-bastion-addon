@@ -545,6 +545,7 @@ local function drawPlan(action, state, view, scale)
   else
     title();togglePin()
   end
+  if type(plan.warning) == "string" and plan.warning ~= "" then note(plan.warning, colors.gold) end
   progress(plan, scale)
   drawTabs(view, scale)
   if view.tab == 3 then drawChoices(action, state, view, plan, scale)
@@ -747,6 +748,32 @@ function Planner.register(frame)
       view.pinnedPlan, view.requestedPlan, lastShown = nil, nil, false
       cachedState, cachedRevision = nil, nil
       clearInventory()
+      if visibility and visibility.active and visibility.shown then
+        local function status(scale)
+          heading("Tradeskill Plans")
+          local message = visibility.message
+          if visibility.pending then
+            message = "Connecting to your Bastion account…"
+          elseif type(message) ~= "string" or message == "" then
+            message = "The account planner is unavailable. Check your linked account and try again."
+          end
+          note(message, colors.muted)
+          if button("Retry connection", nil, 27 * scale, true, not visibility.pending) then action("refresh") end
+        end
+        if frame then
+          local visible = frame.begin("Tradeskill Plans Connection", 470, 210)
+          if visible then styles(frame.scale); status(frame.scale); unstyle() end
+          if frame.finish() then action("close") end
+        else
+          local scale = math.max(0.65, math.min(2, ui.GetIO().uiScale or 1))
+          styles(scale)
+          local visible, open = openWindow("Tradeskill Plans##tradeskill-connection", 470, 210, scale, false)
+          if visible then status(scale) end
+          ui.End()
+          unstyle()
+          if not open then action("close") end
+        end
+      end
       return
     end
     if previousScope ~= scope then

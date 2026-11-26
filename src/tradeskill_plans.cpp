@@ -58,8 +58,8 @@ std::string make_id() {
     return id;
 }
 
-bool has_step(const Json &plan, std::string_view id) {
-    return std::ranges::any_of(rows(plan, "completed"), [id](const auto &step) {
+bool has_step(const Json &steps, std::string_view id) {
+    return std::ranges::any_of(steps, [id](const auto &step) {
         const auto *value = step.template get_ptr<const Json::string_t *>();
         return value && *value == id;
     });
@@ -119,13 +119,21 @@ void plan_fields(const Output &out, const char *key, const Json &record) {
     const auto &plan = field(record, "plan");
     const auto &computed = field(record, "computed");
     const auto &checklist = rows(computed, "checklist");
-    const auto complete = std::ranges::count_if(checklist, [&](const auto &step) { return has_step(plan, text(step, "id")); });
+    const auto &effective = field(computed, "effectiveCompleted");
+    const auto &completed = effective.is_array() ? effective : rows(plan, "completed");
+    const auto complete = std::ranges::count_if(checklist, [&](const auto &step) { return has_step(completed, text(step, "id")); });
     out.key(key); out.begin();
     recipe_fields(out, computed);
     out.string("id", text(plan, "id"));
     out.string("revision", text(record, "revision"));
     out.number("completed", complete);
     out.number("total", static_cast<std::int64_t>(checklist.size()));
+    for (const auto &warning : rows(computed, "warnings")) {
+        if (text(warning, "code") == "review-masked-items") {
+            out.string("warning", text(warning, "message"));
+            break;
+        }
+    }
 
     out.array("materials");
     for (const auto &row : rows(computed, "bom")) {
@@ -140,7 +148,7 @@ void plan_fields(const Output &out, const char *key, const Json &record) {
         out.number("item_id", number(row, "itemId"));
         out.number("quantity", number(row, "need"));
         out.number("owned", number(row, "owned"));
-        out.boolean("completed", has_step(plan, id));
+        out.boolean("completed", has_step(completed, id));
         out.boolean("checkable", std::ranges::any_of(checklist, [&](const auto &step) { return text(step, "id") == id; }));
         out.end();
     }
@@ -157,7 +165,7 @@ void plan_fields(const Output &out, const char *key, const Json &record) {
         out.string("name", label);
         out.string("station", text(step, "description"));
         out.number("quantity", number(step, "quantity"));
-        out.boolean("completed", has_step(plan, id));
+        out.boolean("completed", has_step(completed, id));
         out.end();
     }
     out.end();
@@ -570,6 +578,8 @@ int Adapter::call(const HailstoneArgs *args, HailstoneOut *result) {
         out.boolean("active", peer_ && in_game_);
         out.boolean("shown", shown_);
         out.string("scope", scope_);
+        out.boolean("pending", busy());
+        out.string("message", message_);
         out.identity("revision", revision_);
     } else if (*action == "state") {
         publish(out);
