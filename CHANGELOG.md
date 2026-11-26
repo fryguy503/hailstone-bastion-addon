@@ -1,5 +1,10 @@
 # Changes
 
+## 0.1.0-preview.18
+
+- Track live entry, replay, saved runs and roster eligibility for ToFS Group, ToFS Raid, the Broken Accord, and Firefell.
+- Show the ToFS Raid Writ and offering separately. Show chapter access and the separate completion lockout for Firefell.
+
 ## 0.1.0-preview.17
 
 - Keep Mistmoore encounter columns equal and allow room for wrapped guide text.

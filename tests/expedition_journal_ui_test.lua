@@ -34,6 +34,22 @@ local function fixtures()
     ["copium:170009"] = {serverNow = 1000, relic = detail},
     ["sleepers:0"] = {serverNow = 1000, publicPhase = "2.0", nextPhase = "1.0", rotation = "alternating",
       nextRotationAt = 8200, savedRun = {phase = "2.0", expiresAt = 1060}},
+    ["tofs_group:0"] = {serverNow = 1000, unlock = {state = "not_required"},
+      run = {state = "rejoin", expiresAt = 8200}, replay = {state = "locked", expiresAt = 22600},
+      roster = {kind = "run", state = "ready", members = {{name = "Assigned Group Member", state = "eligible"}}}},
+    ["tofs_raid:0"] = {serverNow = 1000, unlock = {state = "unlocked", payment = "paid",
+      items = {{name = "Splinters of the Unwritten Hour", quantity = 2, required = 3}}},
+      run = {state = "resume", expiresAt = 8200}, replay = {state = "clear"}},
+    ["broken_accord:0"] = {serverNow = 1000, unlock = {state = "locked", reason = "personal_velious_required"},
+      run = {state = "none"}, replay = {state = "clear"}, roster = {state = "unavailable", reason = "leader_only"}},
+    ["firefell:0"] = {serverNow = 1000, unlock = {state = "unlocked"},
+      run = {state = "none"}, replay = {state = "locked", expiresAt = 2200},
+      completion = {state = "locked", expiresAt = 44200}, chapters = {
+        {name = "Velious", state = "unlocked", roster = {kind = "request", state = "ready",
+          members = {{name = "Velious Tester", state = "eligible"}}}},
+        {name = "Luclin", state = "locked", reason = "chapter_locked", roster = {kind = "request", state = "blocked",
+          members = {{name = "Luclin Tester", state = "blocked", reason = "chapter_locked"}}}},
+      }},
   }
 end
 
@@ -247,13 +263,40 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   frame()
   check(shows("Public Tomb\nUnavailable") and shows("Your next Static Mode request\n1.0"),
     "partial Sleeper status guessed the public version or implied guild membership")
-  local beforeGuideSnapshots, beforeGuideSelections = snapshots, #selected
   combo = "##journal-featured"
   click("##journal-featured-broken_accord")
   combo = nil
   frame()
-  check(shows("Combat tuning") and shows("24–36 level-60 characters") and snapshots == beforeGuideSnapshots
-    and #selected == beforeGuideSelections, "reading a featured guide requested live status")
+  check(selected[#selected] == "broken_accord:0" and shows("Combat tuning") and shows("24–36 level-60 characters")
+    and shows("This character needs Velious access."), "Broken Accord missed live entry requirements or static tuning")
+  click("Roster##journal-tab")
+  check(shows("Ask the roster leader") and not shows("Assigned Group Member"), "Broken Accord exposed another roster")
+  click("Overview##journal-tab")
+  local beforeGuideSnapshots, beforeGuideSelections = snapshots, #selected
+  click("##journal-guide:featured:north-tov-broken-accord-kreizenn")
+  frame()
+  check(shows("tribute drakes") and snapshots == beforeGuideSnapshots and #selected == beforeGuideSelections,
+    "opening a published guide issued another live query")
+  combo = "##journal-featured"
+  click("##journal-featured-tofs_group")
+  check(selected[#selected] == "tofs_group:0" and shows("Rejoin your saved run") and shows("2h left") and shows("6h left"),
+    "ToFS Group did not separate active rejoin from the replay lockout")
+  click("Roster##journal-tab")
+  check(shows("Assigned Group Member") and shows("Can rejoin"), "ToFS Group did not show assigned roster eligibility")
+  click("##journal-featured-tofs_raid")
+  check(selected[#selected] == "tofs_raid:0" and shows("2 of 3 held") and shows("Already paid")
+    and shows("Resume in DZ Manager"), "ToFS Raid lost materials, paid retry, or distinct restore instructions")
+  click("##journal-featured-firefell")
+  combo = nil
+  frame()
+  check(selected[#selected] == "firefell:0" and shows("20m left") and shows("12h left")
+    and shows("Chapter access"), "Firefell lost request, completion, or chapter state")
+  click("Roster##journal-tab")
+  check(shows("Velious Tester") and not shows("Luclin Tester"), "Firefell roster mixed chapter results")
+  combo = "##journal-roster-chapter"
+  click("Luclin")
+  combo = nil
+  check(shows("Luclin Tester") and not shows("Velious Tester"), "Firefell roster chapter selection ignored the new chapter")
   harness.close = true
   frame()
   check(closed == 1 and not state.shown, "native window close did not retire the view")

@@ -22,8 +22,8 @@ public:
     bool open();
 
 private:
-    enum class Mode : std::uint16_t { Normal = 1, Bloodbound, Vigil, Copium, Sleepers };
-    static constexpr std::size_t kRelicDetailIndex = static_cast<std::size_t>(Mode::Sleepers);
+    enum class Mode : std::uint16_t { Normal = 1, Bloodbound, Vigil, Copium, Sleepers, TofsGroup, TofsRaid, BrokenAccord, Firefell };
+    static constexpr std::size_t kRelicDetailIndex = static_cast<std::size_t>(Mode::Firefell);
     struct Query {
         Mode mode;
         std::uint32_t relic = 0;

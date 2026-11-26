@@ -154,6 +154,10 @@ std::string_view Adapter::mode_name(Mode mode) {
         case Mode::Vigil: return "vigil";
         case Mode::Copium: return "copium";
         case Mode::Sleepers: return "sleepers";
+        case Mode::TofsGroup: return "tofs_group";
+        case Mode::TofsRaid: return "tofs_raid";
+        case Mode::BrokenAccord: return "broken_accord";
+        case Mode::Firefell: return "firefell";
     }
     return {};
 }
@@ -163,9 +167,10 @@ std::size_t Adapter::index(const Query& query) {
 }
 
 std::optional<Adapter::Query> Adapter::query_from(const HailstoneArgs* args) const {
-    const auto name = services::argument(host_, args, 1, 8);
+    const auto name = services::argument(host_, args, 1, 16);
     if (!name) return std::nullopt;
-    for (const auto mode : {Mode::Normal, Mode::Bloodbound, Mode::Vigil, Mode::Copium, Mode::Sleepers}) {
+    for (const auto mode : {Mode::Normal, Mode::Bloodbound, Mode::Vigil, Mode::Copium, Mode::Sleepers,
+                            Mode::TofsGroup, Mode::TofsRaid, Mode::BrokenAccord, Mode::Firefell}) {
         if (*name != mode_name(mode)) continue;
         std::uint64_t relic = 0;
         HailstoneValue argument{};

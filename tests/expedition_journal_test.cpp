@@ -168,6 +168,28 @@ void snapshots() {
     check(rig.call({"snapshot", "copium", "170009"})["data"]["relic"] == row,
           "Sleeper status replaced the selected Copium relic cache");
 
+    const char* featured[] = {"tofs_group", "tofs_raid", "broken_accord", "firefell"};
+    for (std::uint16_t i = 0; i < std::size(featured); ++i) {
+        const auto mode = featured[i];
+        rig.call({"select", mode, "42"}, false);
+        rig.call({"select", mode});
+        rig.now += 1100;
+        rig.journal.pulse();
+        hailstone::ByteReader request(rig.sent.back().bytes);
+        request.skip(6);
+        check(request.le<std::uint16_t>() == 6 + i, "featured status request used the wrong mode");
+        request.skip(4);
+        check(request.le<std::uint32_t>() == 0, "featured status tried to scope another character");
+        const Json status{{"character", "Fixture"}, {"run", {{"state", "rejoin"}}},
+                          {"replay", {{"state", "locked"}, {"expiresAt", 1700000100 + i}}}};
+        rig.receive(rig.reply(mode, status));
+        check(rig.call({"snapshot", mode})["data"] == status, "featured live snapshot was lost");
+    }
+    check(rig.call({"snapshot", "tofs_group"})["data"]["replay"]["expiresAt"] == 1700000100,
+          "switching featured pages overwrote another snapshot");
+    check(rig.call({"snapshot", "copium", "170009"})["data"]["relic"] == row,
+          "featured status overwrote the selected relic snapshot");
+
     rig.now += 30000;
     rig.journal.pulse();
     check(!rig.call({"snapshot", "normal"}).contains("data"), "expired availability was retained");

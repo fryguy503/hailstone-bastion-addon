@@ -244,16 +244,19 @@ local function hero(view, scale)
 end
 
 local sections = {{"Overview", "overview"}, {"Encounters", "encounters"}, {"Roster", "roster"}}
-local function tabs(view, snapshot, journal, now, scale)
+local featuredSections = {sections[1], sections[3]}
+local function tabs(view, snapshot, journal, now, scale, featured)
   local x, y = ui.GetCursorScreenPos()
   local width = ui.GetContentRegionAvail()
   fill(x, y, width, 35 * scale, color.chrome)
+  local entries = featured and featuredSections or sections
+  local spacing = (#entries - 1) * 8 * scale
   local tabWidth = buttonWidth("Encounters", 105, scale)
-  local short = tabWidth * 3 + 16 * scale > width
-  if short then tabWidth = math.max(1, (width - 16 * scale) / 3) end
-  for index, tab in ipairs(sections) do
+  local short = tabWidth * #entries + spacing > width
+  if short then tabWidth = math.max(1, (width - spacing) / #entries) end
+  for index, tab in ipairs(entries) do
     if index > 1 then ui.SameLine() end
-    local label = short and index < 3 and (index == 1 and "Run" or "Guide") or tab[1]
+    local label = short and tab[2] ~= "roster" and (tab[2] == "overview" and "Run" or "Guide") or tab[1]
     if button(label .. "##journal-tab", tabWidth, 34 * scale, view.tab == tab[2]) then
       view.tab = tab[2]
       if tab[2] == "roster" and Model.roster(snapshot, now).state == "stale" then Model.refresh(view, journal) end
@@ -367,8 +370,8 @@ local function overview(view, snapshot, info, now, scale)
   end
 end
 
-local function rosterCard(snapshot, now, scale)
-  local roster = Model.roster(snapshot, now)
+local function rosterCard(snapshot, now, scale, supplied, featured)
+  local roster = Model.roster(snapshot, now, supplied)
   local members = roster.members or {}
   local savedRun = roster.kind == "run"
   local passed, blocked = 0, 0
@@ -384,7 +387,7 @@ local function rosterCard(snapshot, now, scale)
         or (passed .. " of " .. #members .. " pass" .. (blocked > 0 and " · " .. blocked .. " blocked" or ""))
     end
     featureHeading(label, scale)
-    note(Model.rosterReason(roster, snapshot), "muted")
+    note(Model.rosterReason(roster, snapshot, featured), "muted")
     if #members == 0 then return end
     local flags = ui.TableFlags
     if ui.BeginTable("##journal-roster-table", 2, flags.BordersInnerH | flags.SizingStretchProp) then
@@ -509,7 +512,75 @@ local function sleeperRows(snapshot, now)
   return values
 end
 
-local function featuredPage(view, info, snapshot, now, scale)
+local function featuredStatus(view, info, snapshot, now, scale)
+  local data = snapshot.data or {}
+  local title, detail = Model.featuredHeadline(snapshot, now)
+  heading("Tonight")
+  featureHeading(title, scale)
+  note(detail, "muted")
+  if not snapshot.data then return end
+
+  local saved, replay = Model.runLabels(snapshot, now)
+  local access, tone = Model.featuredUnlock(data.unlock)
+  local values = {{"Saved run", saved}, {"Replay lockout", replay}, {"Your entry access", access, tone}}
+  if data.run and data.run.chapter then
+    local remaining = Model.remaining(snapshot, data.run.expiresAt, now)
+    if not remaining or remaining > 0 then values[#values + 1] = {"Saved chapter", data.run.chapter} end
+  end
+  if info.id == "firefell" then
+    values[#values + 1] = {"Completion lockout", Model.lockoutLabel(snapshot, data.completion, now)}
+  end
+  for _, item in ipairs(data.unlock and data.unlock.items or {}) do
+    if type(item.quantity) == "number" and type(item.required) == "number" then
+      values[#values + 1] = {item.name, item.quantity .. " of " .. item.required .. " held"}
+    end
+  end
+  if data.unlock and data.unlock.payment == "paid" then
+    values[#values + 1] = {"Raid offering", "Already paid. Ask Avel for raid to retry."}
+  elseif data.unlock and data.unlock.payment == "pending" then
+    values[#values + 1] = {"Raid offering", "Pending. Ask Avel to confirm before giving more Splinters."}
+  end
+  rows("featured-status-" .. view.mode, values)
+
+  if data.chapters and #data.chapters > 0 then
+    ui.Separator()
+    heading("Chapter access")
+    local chapters = {}
+    for _, chapter in ipairs(data.chapters) do
+      local label, chapterTone = Model.featuredUnlock(chapter)
+      chapters[#chapters + 1] = {chapter.name, label, chapterTone}
+    end
+    rows("featured-chapters", chapters)
+  end
+end
+
+local function chapterRoster(view, snapshot, scale)
+  local data = snapshot.data
+  if not data or data.roster and data.roster.kind == "run" or not data.chapters then return end
+  local choices, selected = {}, nil
+  for _, chapter in ipairs(data.chapters) do
+    if chapter.roster then
+      choices[#choices + 1] = chapter
+      if chapter.name == (view.featuredChapter or data.roster and data.roster.chapter) then selected = chapter end
+    end
+  end
+  selected = selected or choices[1]
+  if not selected then return end
+  heading("Firefell chapter")
+  ui.SetNextItemWidth(math.min(ui.GetContentRegionAvail(), 400 * scale))
+  if ui.BeginCombo("##journal-roster-chapter", selected.name) then
+    for _, chapter in ipairs(choices) do
+      if ui.Selectable(chapter.name, selected == chapter) then
+        selected = chapter
+        view.featuredChapter = chapter.name
+      end
+    end
+    ui.EndCombo()
+  end
+  return data.roster and data.roster.chapter == selected.name and data.roster or selected.roster
+end
+
+local function featuredPage(view, info, snapshot, now, scale, journal)
   heading(info.zone .. " / " .. info.subtitle)
   featureHeading(info.title, scale)
   note(info.description, "muted")
@@ -517,6 +588,13 @@ local function featuredPage(view, info, snapshot, now, scale)
     ui.Separator()
     heading("Current phase")
     rows("sleeper-phases", sleeperRows(snapshot, now))
+  else
+    tabs(view, snapshot, journal, now, scale, true)
+    if view.tab == "roster" then
+      rosterCard(snapshot, now, scale, info.id == "firefell" and chapterRoster(view, snapshot, scale) or nil, true)
+      return
+    end
+    featuredStatus(view, info, snapshot, now, scale)
   end
   if #info.access > 0 then
     ui.Separator()
@@ -653,7 +731,7 @@ function M.draw(view, window, journal, scale)
     elseif view.mode == "library" then
       Library.list(view, scale, libraryStyle)
     elseif featuredById[view.mode] then
-      featuredPage(view, featuredById[view.mode], snapshot, now, scale)
+      featuredPage(view, featuredById[view.mode], snapshot, now, scale, journal)
     else
       modeBefore = view.mode
       hero(view, scale)
