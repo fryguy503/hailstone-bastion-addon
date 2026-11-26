@@ -55,9 +55,11 @@ for _,pack in ipairs({"modern","gamepad"})do
   check(twistReads==0 and #twistCalls==0,"hidden hub polled or started song twisting")
   check(campReads==0 and #campCalls==0,"hidden hub polled or requested fast camp")
   check(corpseReads==0 and #corpseCalls==0,"hidden hub read or changed corpse visibility")
-  s.shown=true;frame();check(table.concat(texts," "):find("10 tools",1,true),"module inventory omitted")
+  s.shown=true;frame();check(table.concat(texts," "):find("11 tools",1,true),"module inventory omitted")
   clicks["Raid Ready Check"]=true;frame()
   check(BASTION_UI.raid_ready_check and #calls==0,"Ready Check launcher submitted work or failed to open its independent panel")
+  clicks["Expedition Journal"]=true;frame()
+  check(calls[#calls][1]=="open"and calls[#calls][2]=="expeditionjournal","Expedition Journal launcher missing")
   clicks["Encounter telegraphs"]=true;frame();check(calls[#calls][1]=="open"and calls[#calls][2]=="telegraphs","telegraph launcher missing")
   for _,name in ipairs({"telegraphs","gear_score","raidbars","citadel_follow"})do panel(name);check(BASTION_UI[name],"panel revision did not open module")end
   calls={};panel("settings")

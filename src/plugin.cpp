@@ -5,6 +5,7 @@
 #include "follow_addon.h"
 #include "raidbars.h"
 #include "raid_ready_check.h"
+#include "expedition_journal.h"
 #include "factions_addon.h"
 #include "saved_expeditions_addon.h"
 #include "pet_inventory_addon.h"
@@ -28,12 +29,14 @@ HAILSTONE_PLUGIN
 namespace {
 static_assert(bastion::ready_check::kOpcode != bastion::gear_score::kOpcode);
 static_assert(bastion::ready_check::kOpcode != bastion::firefell::opcode);
+static_assert(bastion::journal::kOpcode != bastion::ready_check::kOpcode);
 
 bool selected=false, initialized=false, saw_world_announcement=false;
 bastion::CitadelHub hub;
 bastion::follow::Addon follow;
 bastion::raidbars::Adapter raid;
 bastion::ready_check::Adapter ready_check;
+bastion::journal::Adapter journal;
 bastion::factions::Adapter factions;
 bastion::saved_expeditions::Adapter expeditions;
 bastion::pet_inventory::Adapter pets;
@@ -70,7 +73,7 @@ void peer(bool value) {
         if(HAILSTONE_HOST_HAS(host,log)) host->log(host->host,2,"Bastion addon requires server addon services and map policy revision/context support; features remain inactive.");
     }
     selected=value;
-    hub.peer(value); follow.peer(value); raid.peer(value); ready_check.peer(value); twist.peer(value); fast_camp.peer(value);
+    hub.peer(value); follow.peer(value); raid.peer(value); ready_check.peer(value); journal.peer(value); twist.peer(value); fast_camp.peer(value);
     factions.peer(value); expeditions.peer(value); pets.peer(value);
     home.peer(value); gear.peer(value); telegraphs.peer(value); firefell.peer(value); commands.peer(value); integrity.peer(value); kinbound.clear();
 }
@@ -94,7 +97,7 @@ void state(int value) {
     }
     // With no cached rules or a late consent, required plugins can first load at zone-in.
     if (value==GAMESTATE_INGAME && !selected && !saw_world_announcement && official_world()) peer(true);
-    hub.game_state(value); follow.game_state(value); raid.game_state(value); ready_check.game_state(value);
+    hub.game_state(value); follow.game_state(value); raid.game_state(value); ready_check.game_state(value); journal.game_state(value);
     factions.game_state(value); expeditions.game_state(value); pets.game_state(value);
     home.game_state(value); gear.game_state(value); telegraphs.game_state(value); firefell.game_state(value);
     integrity.game_state(value); twist.game_state(value); fast_camp.game_state(value);
@@ -120,6 +123,7 @@ bool family(std::string_view raw) {
 bool open(std::string_view feature) {
     if(feature=="faction" || feature=="factions") return factions.command("open");
     if(feature=="dz" || feature=="dzmanager") return expeditions.command("open");
+    if(feature=="expeditionjournal" || feature=="journal") return journal.open();
     if(feature=="petinventory") return pets.command("open");
     if(feature=="homecity") return home.command("open");
     if(feature=="raidbars" || feature=="citadel_follow" || feature=="telegraphs" || feature=="gear_score" || feature=="firefell" ||
@@ -156,6 +160,7 @@ const char* command_impl(const char* line) {
     if(root=="/faction" || root=="/factions") { factions.command(args); return ""; }
     if(root=="/petinventory" || root=="/petgear") { pets.command(args); return ""; }
     if(root=="/dzmanager") { expeditions.command(args); return ""; }
+    if(root=="/expeditionjournal") { if(args.empty()) journal.open(); return ""; }
     if(root=="/raidbars") { if(args.empty()) hub.open("raidbars"); else raid.command(args); return ""; }
     if(root=="/rightclicksell") { hub.command("rightclicksell "+lower(args)); return ""; }
     if(root=="/setstartcity") { home.command(args); return ""; }
@@ -171,6 +176,7 @@ const char* command_impl(const char* line) {
     else if(feature=="fastcamp") fast_camp.command("/fastcamp "+std::string(args));
     else if(feature=="faction" || feature=="factions") factions.command(args);
     else if(feature=="dz" || feature=="dzmanager") expeditions.command(args);
+    else if((feature=="expeditionjournal" || feature=="journal") && args.empty()) journal.open();
     else if(feature=="petinventory" || feature=="petgear") pets.command(args);
     else if(feature=="raidbars") { if(args.empty()) hub.open("raidbars"); else raid.command(args); }
     else if(feature=="telegraphs") { if(args.empty()) hub.open("telegraphs"); else telegraphs.command(lower(args)); }
@@ -221,19 +227,19 @@ int packet(int stream,int direction,HailstonePacket* p) {
     return factions.packet(p->opcode,p->data,p->size) || expeditions.packet(p->opcode,p->data,p->size) ||
         pets.packet(p->opcode,p->data,p->size) || home.packet(p->opcode,p->data,p->size) ||
         gear.packet(p->opcode,p->data,p->size) || firefell.packet(p->opcode,p->data,p->size) ||
-        ready_check.packet(p->opcode,p->data,p->size);
+        ready_check.packet(p->opcode,p->data,p->size) || journal.packet(p->opcode,p->data,p->size);
 }
 }
 HAILSTONE_API uint32_t hailstone_plugin_caps(void) {
     return HAILSTONE_CAP_READ|HAILSTONE_CAP_COMMANDS|HAILSTONE_CAP_TARGET|HAILSTONE_CAP_ACTIONS|
         HAILSTONE_CAP_MOVE|HAILSTONE_CAP_CHAT|HAILSTONE_CAP_EVENTS|HAILSTONE_CAP_UI|
-        HAILSTONE_CAP_PACKETS|HAILSTONE_CAP_EXTEND|HAILSTONE_CAP_LOGIN;
+        HAILSTONE_CAP_PACKETS|HAILSTONE_CAP_EXTEND|HAILSTONE_CAP_LOGIN|HAILSTONE_CAP_WEB;
 }
 HAILSTONE_API void InitializePlugin(void) noexcept { guarded([] {
-    hub.set_host(host); follow.set_host(host); raid.set_host(host); ready_check.set_host(host);
+    hub.set_host(host); follow.set_host(host); raid.set_host(host); ready_check.set_host(host); journal.set_host(host);
     factions.set_host(host); expeditions.set_host(host); pets.set_host(host);
     home.set_host(host); gear.set_host(host); telegraphs.set_host(host); firefell.set_host(host); commands.set_host(host); integrity.set_host(host); twist.set_host(host); fast_camp.set_host(host);
-    hub.initialize(open); follow.initialize(); raid.initialize(); ready_check.initialize(); factions.initialize(); expeditions.initialize(); pets.initialize();
+    hub.initialize(open); follow.initialize(); raid.initialize(); ready_check.initialize(); journal.initialize(); factions.initialize(); expeditions.initialize(); pets.initialize();
     home.initialize(); gear.initialize(); telegraphs.initialize(); firefell.initialize(); commands.initialize(); integrity.initialize(); twist.initialize(); fast_camp.initialize();
     saw_world_announcement=false;
     peer(false); initialized=true;
@@ -244,18 +250,18 @@ HAILSTONE_API void InitializePlugin(void) noexcept { guarded([] {
 }); }
 HAILSTONE_API void ShutdownPlugin(void) noexcept { guarded([] {
     initialized=false; peer(false);
-    hub.set_host(nullptr); follow.set_host(nullptr); raid.set_host(nullptr); ready_check.set_host(nullptr);
+    hub.set_host(nullptr); follow.set_host(nullptr); raid.set_host(nullptr); ready_check.set_host(nullptr); journal.set_host(nullptr);
     factions.set_host(nullptr); expeditions.set_host(nullptr); pets.set_host(nullptr);
     home.set_host(nullptr); gear.set_host(nullptr); telegraphs.set_host(nullptr); firefell.set_host(nullptr); commands.set_host(nullptr); integrity.set_host(nullptr); twist.set_host(nullptr); fast_camp.set_host(nullptr);
 }); }
 HAILSTONE_API void SetGameState(int value) noexcept { guarded([&] { state(value); }); }
 HAILSTONE_API void OnZoned(void) noexcept { guarded([] { state(GAMESTATE_INGAME); }); }
 HAILSTONE_API void OnBeginZone(void) noexcept { guarded([] {
-    hub.begin_zone(); follow.begin_zone(); raid.begin_zone(); ready_check.begin_zone(); factions.begin_zone(); expeditions.begin_zone(); pets.begin_zone();
+    hub.begin_zone(); follow.begin_zone(); raid.begin_zone(); ready_check.begin_zone(); journal.begin_zone(); factions.begin_zone(); expeditions.begin_zone(); pets.begin_zone();
     home.begin_zone(); gear.begin_zone(); telegraphs.begin_zone(); firefell.begin_zone(); twist.begin_zone(); fast_camp.begin_zone();
 }); }
 HAILSTONE_API void OnPulse(void) noexcept { guarded([] {
-    hub.pulse(); follow.pulse(); raid.pulse(); ready_check.pulse(); factions.pulse(); expeditions.pulse(); pets.pulse();
+    hub.pulse(); follow.pulse(); raid.pulse(); ready_check.pulse(); journal.pulse(); factions.pulse(); expeditions.pulse(); pets.pulse();
     home.pulse(); gear.pulse(); telegraphs.pulse(); firefell.pulse(); integrity.pulse(); twist.pulse(); fast_camp.pulse();
 }); }
 HAILSTONE_API int OnIncomingChat(const char* line,std::uint32_t) noexcept {

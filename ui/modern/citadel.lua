@@ -21,6 +21,7 @@ local equipment={
 local adventures={
   {"Raid bars","raidbars","Layout & management"},
   {"Raid Ready Check","raid_ready_check","Responses by subgroup"},
+  {"Expedition Journal","expeditionjournal","Mistmoore access, guides & relics"},
   {"DZ manager","dz","Saved expeditions"},
   {"Encounter telegraphs","telegraphs","Colors & previews"},
   {"Firefell instance","firefell","Current instance"},

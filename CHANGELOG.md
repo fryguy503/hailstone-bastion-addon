@@ -1,5 +1,12 @@
 # Changes
 
+## 0.1.0-preview.13
+
+- Add Expedition Journal to **Bastion → Tools → Raids & adventures**, with the `/expeditionjournal` shortcut.
+- Show Mistmoore Eclipse and Midnight Vigil entry instructions, requirements and encounter guides. Live Bastion quest support adds personal unlocks, replay timers, re-entry, and leader roster checks.
+- Add Master Artificer Copium's tracker for exact individual encounter credit, owned relics and reward choices.
+- The journal uses the embedded browser and requests the `web` permission. The bundled native guide remains available without it.
+
 ## 0.1.0-preview.12
 
 - Add Raid Ready Check to Modern and Gamepad. Raid leaders can start a 45-second check or end it early, and members can change their answers while it is open.

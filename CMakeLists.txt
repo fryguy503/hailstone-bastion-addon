@@ -35,7 +35,7 @@ add_library(bastion_core STATIC
 target_sources(bastion_core PRIVATE src/firefell.cpp src/server_commands.cpp src/kinbound.cpp src/integrity.cpp
   src/twist.cpp src/fast_camp.cpp
   src/gear_score_protocol.cpp src/gear_score_state.cpp src/gear_score_addon.cpp
-  src/home_city_protocol.cpp src/home_city_addon.cpp src/raid_ready_check.cpp
+  src/home_city_protocol.cpp src/home_city_addon.cpp src/raid_ready_check.cpp src/expedition_journal.cpp
   src/telegraphs_protocol.cpp src/telegraphs_state.cpp src/telegraphs_geometry.cpp src/telegraphs_adapter.cpp src/telegraphs_controls.cpp)
 target_compile_definitions(bastion_core PRIVATE HAILSTONE_HOST)
 # The Bastion preview and public Hailstone SDKs expose different optional extensions.
@@ -79,7 +79,7 @@ add_custom_command(TARGET bastion POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_di
 install(TARGETS bastion LIBRARY DESTINATION . RUNTIME DESTINATION .)
 install(DIRECTORY ui DESTINATION .)
 if(BUILD_TESTING)
-  foreach(kind IN ITEMS follow_addon raidbars raid_ready_check factions saved_expeditions pet_inventory citadel firefell server_commands
+  foreach(kind IN ITEMS follow_addon raidbars raid_ready_check expedition_journal factions saved_expeditions pet_inventory citadel firefell server_commands
       kinbound gear_score gear_score_addon home_city telegraphs telegraphs_geometry telegraphs_adapter integrity character_directory twist fast_camp)
     add_executable(bastion_${kind}_tests tests/${kind}_test.cpp)
     target_link_libraries(bastion_${kind}_tests PRIVATE bastion_core)
