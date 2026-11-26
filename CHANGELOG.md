@@ -1,5 +1,11 @@
 # Changes
 
+## 0.1.0-preview.15
+
+- Make the Expedition Journal native in both Modern and Gamepad. The eclipse layout, encounter guides, roster, and Copium tracker open directly in the client UI.
+- Read live journal status through the existing Bastion game connection. The bundled catalog is available offline.
+- Remove the Web permission from the add-on.
+
 ## 0.1.0-preview.14
 
 - Add **Bastion → Tools → Equipment → Tradeskill Plans** and the `/tradeskillplans` shortcut.

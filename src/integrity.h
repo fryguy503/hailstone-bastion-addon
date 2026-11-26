@@ -9,7 +9,7 @@ inline constexpr std::uint16_t opcode=0x7d1a;
 inline constexpr std::uint32_t magic=0x43495431,version=3;
 inline constexpr std::uint32_t native_report_abi=3; // CIT1 v3 accepts exactly SDK ABI 3.
 inline constexpr std::uint64_t features=0x3fff,challenge_ttl_ms=60000,ack_timeout_ms=10000;
-inline constexpr std::string_view addon_version="0.1.0-preview.13";
+inline constexpr std::string_view addon_version="0.1.0-preview.15";
 inline constexpr bool login_checkpoint(std::uint16_t op) {
     return op==0x0f13||op==0x4b8d||op==0x298d||op==0x578f;
 }

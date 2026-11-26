@@ -2,6 +2,9 @@
 #pragma once
 
 #include "citadel_services.h"
+#include "nlohmann/json.hpp"
+
+#include <array>
 
 namespace bastion::journal {
 
@@ -30,41 +33,43 @@ private:
         std::uint32_t id;
         std::uint64_t sent_at;
     };
+    struct Entry {
+        std::uint32_t relic = 0;
+        std::uint64_t received_at = 0;
+        nlohmann::json data;
+        bool unavailable = false;
+    };
 
     static int callback(void* user, const HailstoneArgs* args, HailstoneOut* out) noexcept;
     int ui(const HailstoneArgs* args, HailstoneOut* out);
-    static std::optional<Query> parse_query(std::string_view message);
+    std::optional<Query> query_from(const HailstoneArgs* args) const;
     static std::string_view mode_name(Mode mode);
-    void browse(bool backup = false);
-    void close_tab();
+    static std::size_t index(const Query& query);
+    void close();
     void reset_session();
-    void synchronize();
-    bool trusted_page() const;
-    std::string_view page_url() const;
-    bool notify(std::string_view payload) const;
-    void unavailable(const Query& query) const;
-    void read_page_messages();
+    void synchronize(bool force = false);
+    void select(const Query& query, bool refresh);
+    void unavailable(const Query& query);
     void send_query();
+    void changed();
+    void write_snapshot(const services::Output& result, const Query& query) const;
 
     const PluginHostApi* host_ = nullptr;
     bool selected_ = false;
     bool in_game_ = false;
     bool shown_ = false;
-    bool ready_ = false;
-    bool opening_ = false;
-    bool backup_ = false;
-    bool bundle_sent_ = false;
-    bool using_bundle_ = false;
     bool sent_ = false;
-    std::uint32_t tab_ = 0;
-    std::uint64_t opened_at_ = 0;
-    std::uint64_t last_send_ = 0;
-    std::optional<std::uint64_t> last_library_open_;
     std::uint64_t now_ = 0;
+    std::uint64_t next_context_at_ = 0;
+    std::uint64_t last_send_ = 0;
+    std::uint64_t generation_ = 0;
+    std::uint64_t revision_ = 0;
     std::optional<services::Context> context_;
+    Query wanted_{Mode::Normal};
     std::optional<Query> queued_;
     std::optional<Pending> pending_;
-    std::string reply_;
+    // Three expedition modes, the Copium list, and one selected relic.
+    std::array<Entry, 5> entries_{};
 };
 
 } // namespace bastion::journal

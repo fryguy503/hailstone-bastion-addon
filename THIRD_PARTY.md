@@ -6,7 +6,7 @@ The public Hailstone SDK headers are MIT licensed. Their complete notice is reta
 The addon is built against that public interface. Hailstone supplies the Lua runtime, UI widgets,
 asset loading and graphics services at runtime; they are not bundled in the addon package.
 
-JSON for Modern C++ 3.11.2 is used to decode the authenticated tradeskill service responses.
+JSON for Modern C++ 3.11.2 decodes authenticated tradeskill plans and expedition journal replies.
 Copyright © 2013–2022 Niels Lohmann. See the [MIT notice](docs/NLOHMANN-JSON-LICENSE.txt).
 
 Server command names and player-visible help are a generated catalog of the inspected server

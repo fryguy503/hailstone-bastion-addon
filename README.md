@@ -4,7 +4,7 @@ A standalone Bastion addon with native Hailstone Lua windows for Modern and Game
 Open **`/bastion`** for tools, character settings, and the searchable server command catalog.
 `/citadel` and `/cit` remain compatible aliases.
 
-Preview 13 requires Hailstone 0.7.3-beta or newer. Bastion uses Hailstone's server add-on services,
+Preview 15 requires Hailstone 0.7.3-beta or newer. Bastion uses Hailstone's server add-on services,
 modular UI extensions and map ownership.
 The map-local filter panel uses `hs.UI` 1.5. Server-only NPC Find, saved corpse visibility,
 Citadel song timing and server-approved fast camp require the corresponding Hailstone updates.
@@ -22,7 +22,7 @@ See [SDK compatibility](sdk/README.md).
 | Maps | **Map controls → Bastion filters** selects group members, raid names, NPCs, merchants, other players and corpses. Tracking permissions and Citadel's reduced planar NPC/corpse range apply. On compatible Hailstone clients, Find lists NPCs marked findable by Bastion and requests the server's path. Older clients keep NPC Find disabled. The latest client can also draw a guide to your current target or a selected Bazaar trader. Self, terrain, labels, pins and other-server stock preferences are preserved. Ordinary unrelated players remain unnamed. |
 | Raid bars | Native Lua group cards or class grid, HP/class filters, class colors/roles, known resource bars, pets, targeting, explicit management, Delegate Raid Manager List/Grant/Revoke controls, edit/resize, scrolling and per-character settings. |
 | Raid Ready Check | Server-owned 45-second check with a separate response window and live counts by subgroup. Raid Bars show a status beside each player's HP. |
-| Expedition Journal | `/expeditionjournal` opens Mistmoore Eclipse, Bloodbound, Midnight Vigil and the Copium tracker. Personal access, replay timers, re-entry and leader roster checks use matching Bastion quest support. The guide is bundled for offline use. |
+| Expedition Journal | `/expeditionjournal` opens the native Mistmoore Eclipse and Midnight Vigil guide and Copium tracker. Personal access, replay timers, re-entry and leader roster checks use matching Bastion quest support. The guide is bundled for offline use. |
 | Tradeskill Plans | `/tradeskillplans` opens the recipe catalog and your linked Bastion account's saved plans. Create a plan, check materials against carried inventory, edit quantities and recipe choices, and pin the checklist while crafting. |
 | Faction standings | FAC1 categories, global search, numeric values/progress, retained selection, inspection and TSV export, including `/outputfile faction`. |
 | DZ manager | Saved expeditions, eligibility/expiry, explicit rejoin, and preserved delegate/server command paths. Rejoin does not teleport or renew an instance. |

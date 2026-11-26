@@ -12,7 +12,7 @@ p = argparse.ArgumentParser()
 p.add_argument('--client', type=pathlib.Path, required=True, help='Hailstone checkout with tools/make_addon.py')
 p.add_argument('--build', type=pathlib.Path, default=root / 'build')
 p.add_argument('--platform', required=True)
-p.add_argument('--version', default='0.1.0-preview.14')
+p.add_argument('--version', default='0.1.0-preview.15')
 p.add_argument('--min-client', default='0.7.3-beta', help='Oldest Hailstone version for the built binary')
 p.add_argument('--out', type=pathlib.Path, default=root / 'release')
 a = p.parse_args()
@@ -22,7 +22,7 @@ suffix = '.dll' if a.platform.startswith('windows-') else '.dylib' if a.platform
 library = build / ('bastion' + suffix)
 if not tool.is_file() or not library.is_file():
     p.error('Build the plugin and provide a Hailstone checkout with tools/make_addon.py')
-caps = 'read,commands,target,actions,move,chat,events,ui,packets,extend,login,web'
+caps = 'read,commands,target,actions,move,chat,events,ui,packets,extend,login'
 with tempfile.TemporaryDirectory(prefix='bastion-package-', dir=build) as temporary:
     stage = pathlib.Path(temporary).resolve()
     if not stage.is_relative_to(build):

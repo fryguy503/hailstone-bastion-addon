@@ -242,7 +242,7 @@ int packet(int stream,int direction,HailstonePacket* p) {
 HAILSTONE_API uint32_t hailstone_plugin_caps(void) {
     return HAILSTONE_CAP_READ|HAILSTONE_CAP_COMMANDS|HAILSTONE_CAP_TARGET|HAILSTONE_CAP_ACTIONS|
         HAILSTONE_CAP_MOVE|HAILSTONE_CAP_CHAT|HAILSTONE_CAP_EVENTS|HAILSTONE_CAP_UI|
-        HAILSTONE_CAP_PACKETS|HAILSTONE_CAP_EXTEND|HAILSTONE_CAP_LOGIN|HAILSTONE_CAP_WEB;
+        HAILSTONE_CAP_PACKETS|HAILSTONE_CAP_EXTEND|HAILSTONE_CAP_LOGIN;
 }
 HAILSTONE_API void InitializePlugin(void) noexcept { guarded([] {
     hub.set_host(host); follow.set_host(host); raid.set_host(host); ready_check.set_host(host); journal.set_host(host);
