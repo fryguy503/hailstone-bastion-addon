@@ -58,6 +58,18 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   local selected, refreshed = {}, {}
   local snapshots, closed = 0, 0
   local search, combo, scroll, detailLoads = nil, nil, 0, 0
+  local picker = "##journal-expedition-selector"
+  local activeCombo, expeditionPreview, expeditionItems, expeditionSelected, expeditionFocused
+  local future = {
+    id = "future_trial",
+    label = "The Observatory of Ancient Échoes and Forgotten Constellations of the Celestial Explorers",
+    title = "The Observatory Trial",
+    zone = "The Observatory",
+    subtitle = "Group expedition",
+    description = "Ascend the observatory and align its instruments.",
+    access = {{"Entry NPC", "The Observatory Keeper"}},
+    encounters = {},
+  }
   local state = {shown = false, connected = true, character = "Journal Character", revision = "1", generation = "1"}
   local data = fixtures()
   local plugin = {
@@ -84,13 +96,29 @@ for _, pack in ipairs({"modern", "gamepad"}) do
     Begin = function() return true, true end, End = function() end,
     BeginChild = function() return true end, EndChild = function() end,
     TextWrapped = function(text) texts[#texts + 1] = text end,
-    Button = buttonClicked, Selectable = buttonClicked,
+    Button = buttonClicked,
+    Selectable = function(label, isSelected)
+      if activeCombo == picker then
+        local title = label:match("^(.-)##") or label
+        expeditionItems[#expeditionItems + 1] = title
+        if isSelected then expeditionSelected = title end
+      end
+      return buttonClicked(label)
+    end,
     SameLine = function() end,
     SetScrollY = function(value) scroll = value end,
     GetScrollY = function() return scroll end,
     InputTextWithHint = function(_, _, value) return search or value end,
-    BeginCombo = function(id) return id == combo end,
-    EndCombo = function() end,
+    BeginCombo = function(id, preview)
+      if id == picker then expeditionPreview, expeditionItems, expeditionSelected, expeditionFocused = preview, {}, nil, nil end
+      if id ~= combo then return false end
+      activeCombo = id
+      return true
+    end,
+    EndCombo = function() activeCombo = nil end,
+    SetItemDefaultFocus = function()
+      if activeCombo == picker then expeditionFocused = expeditionItems[#expeditionItems] end
+    end,
   }
   local harness = setup(root, pack, ui, eq, check)
   local guideTable, guideColumns, guideWeights = false, 0, {}
@@ -111,7 +139,9 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   local packDofile = dofile
   dofile = function(path)
     if path:match("^lib/encounter_library/detail_") then detailLoads = detailLoads + 1 end
-    return packDofile(path)
+    local result = packDofile(path)
+    if path == "lib/expedition_journal_featured.lua" then result[#result + 1] = future end
+    return result
   end
   dofile(root .. "/ui/" .. pack .. "/expedition_journal.lua")
   local function frame()
@@ -126,6 +156,11 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   local function click(label)
     clicks[label] = true
     frame()
+  end
+  local function selectExpedition(id)
+    combo = picker
+    click("##journal-expedition-" .. id)
+    combo = nil
   end
 
   for _ = 1, 30 do frame() end
@@ -142,6 +177,14 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   for _ = 1, 20 do frame() end
   check(snapshots == initialSnapshots and #selected == 1, "stable native frames rebuilt the snapshot or sent requests")
   check(detailLoads == 0, "overview eagerly loaded encounter details")
+
+  combo = picker
+  frame()
+  combo = nil
+  check(table.concat(expeditionItems, "|") == table.concat({"Mistmoore Eclipse", "Midnight Vigil", "ToFS Group",
+    "ToFS Raid", "ToV Broken Accord", "Firefell", "Sleeper's Tomb", future.label}, "|") and
+    expeditionSelected == "Mistmoore Eclipse" and expeditionFocused == expeditionSelected and #selected == 1,
+    "opening the expedition selector omitted a catalog row, lost the current page, or sent a request")
 
   scroll = 124
   click("##journal-guide:expedition:gravekeeper-vhal")
@@ -166,17 +209,17 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   click("Overview##journal-tab")
   check(selected[#selected] == "hard:0" and shows("Writ required") and shows("Bloodbound requests"),
     "Bloodbound selection used the wrong live mode or unlock")
-  click("Midnight Vigil##journal-route-2")
+  selectExpedition("vigil")
   check(selected[#selected] == "vigil:0" and shows("Admission relics") and shows("3–6 characters"),
     "Midnight Vigil omitted its mode and prerequisites")
 
-  click("Copium tracker##journal-route-3")
+  click("##journal-route-copium")
   check(shows("Exact credit") and shows("1800200211") and shows("Ready to visit Copium")
     and shows("Bazu Claw Hammer") and shows("Lore conflict"), "native Copium detail omitted credit or vendor choices")
   check(selected[#selected] == "copium:170009", "Copium picked the wrong relic detail")
 
   local liveSnapshots, liveSelections = snapshots, #selected
-  click("##journal-route-4")
+  click("##journal-route-library")
   frame()
   check(shows("Encounter Library") and shows("Acrylia Caverns") and shows("Anguish, the Fallen Palace"),
     "native library omitted published encounters from multiple zones")
@@ -204,44 +247,40 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   frame()
   check(shows("1–1 of 1 encounters") and snapshots == liveSnapshots and #selected == liveSelections,
     "returning to the library lost filters or requested live expedition state")
-  click("##journal-route-3")
+  click("##journal-route-copium")
 
   state.generation, state.revision, state.connected = "2", "2", false
   frame()
   check(shows("Live status unavailable") and shows("Redemption status unavailable") and not shows("1800200211"),
     "disconnected window retained old character credit or failed to identify the unavailable live status")
   harness.width, harness.height = 420, 900
-  click("##journal-route-1")
+  selectExpedition("normal")
   check(shows("Gravekeeper Vhal") and shows("Personal status and roster eligibility are unavailable."),
     "narrow offline journal lost its packaged guide or unavailable state")
   check(guideColumns == 1 and #guideWeights == 1 and guideWeights[1] == 1,
     "narrow guardian guide retained side-by-side columns")
-  click("##journal-route-4")
+  click("##journal-route-library")
   frame()
   check(shows("Lord Inquisitor Seru") and not shows("unavailable"), "disconnect disabled the native guide library")
 
   local offlineSnapshots, offlineSelections = snapshots, #selected
-  combo = "##journal-featured"
-  click("##journal-featured-tofs_group")
+  selectExpedition("tofs_group")
   check(shows("The Seven Silences") and shows("3–6 characters") and shows("Keeper Avel Rimeglass"),
     "narrow featured menu did not open the group guide with access requirements")
-  click("##journal-featured-tofs_raid")
+  selectExpedition("tofs_raid")
   check(shows("The Unwritten Hour") and shows("12–36 characters"), "ToFS raid reused group access requirements")
-  click("##journal-featured-broken_accord")
+  selectExpedition("broken_accord")
   check(shows("The Broken Accord") and shows("Kreizenn"), "Broken Accord omitted raid encounter links")
-  combo = nil
   click("##journal-guide:featured:north-tov-broken-accord-kreizenn")
   frame()
   check(shows("Kreizenn") and shows("tribute drakes"), "featured encounter link did not open its full guide")
   click("##journal-guide-back")
   frame()
   check(shows("The Broken Accord"), "featured encounter did not return to its previous page")
-  combo = "##journal-featured"
-  click("##journal-featured-firefell")
+  selectExpedition("firefell")
   check(shows("The Ember Chronicle") and shows("Chronicler Sihra") and shows("Saved run"),
     "Firefell omitted its entrance or chapter information")
-  click("##journal-featured-sleepers")
-  combo = nil
+  selectExpedition("sleepers")
   frame()
   check(shows("Public Tomb\nUnavailable") and shows("Sentinel of the Ages") and not shows("Your saved run"),
     "offline Sleeper page guessed the public phase or hid the guide")
@@ -263,9 +302,7 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   frame()
   check(shows("Public Tomb\nUnavailable") and shows("Your next Static Mode request\n1.0"),
     "partial Sleeper status guessed the public version or implied guild membership")
-  combo = "##journal-featured"
-  click("##journal-featured-broken_accord")
-  combo = nil
+  selectExpedition("broken_accord")
   frame()
   check(selected[#selected] == "broken_accord:0" and shows("Combat tuning") and shows("24–36 level-60 characters")
     and shows("This character needs Velious access."), "Broken Accord missed live entry requirements or static tuning")
@@ -277,17 +314,15 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   frame()
   check(shows("tribute drakes") and snapshots == beforeGuideSnapshots and #selected == beforeGuideSelections,
     "opening a published guide issued another live query")
-  combo = "##journal-featured"
-  click("##journal-featured-tofs_group")
+  selectExpedition("tofs_group")
   check(selected[#selected] == "tofs_group:0" and shows("Rejoin your saved run") and shows("2h left") and shows("6h left"),
     "ToFS Group did not separate active rejoin from the replay lockout")
   click("Roster##journal-tab")
   check(shows("Assigned Group Member") and shows("Can rejoin"), "ToFS Group did not show assigned roster eligibility")
-  click("##journal-featured-tofs_raid")
+  selectExpedition("tofs_raid")
   check(selected[#selected] == "tofs_raid:0" and shows("2 of 3 held") and shows("Already paid")
     and shows("Resume in DZ Manager"), "ToFS Raid lost materials, paid retry, or distinct restore instructions")
-  click("##journal-featured-firefell")
-  combo = nil
+  selectExpedition("firefell")
   frame()
   check(selected[#selected] == "firefell:0" and shows("20m left") and shows("12h left")
     and shows("Chapter access"), "Firefell lost request, completion, or chapter state")
@@ -297,6 +332,18 @@ for _, pack in ipairs({"modern", "gamepad"}) do
   click("Luclin")
   combo = nil
   check(shows("Luclin Tester") and not shows("Velious Tester"), "Firefell roster chapter selection ignored the new chapter")
+
+  local beforeFutureSnapshots, beforeFutureSelections = snapshots, #selected
+  harness.width, harness.height = 420, 900
+  selectExpedition(future.id)
+  frame()
+  check(shows(future.title) and shows("The Observatory Keeper") and not shows("unavailable")
+    and utf8.len(expeditionPreview) and expeditionPreview:sub(-3) == "…"
+    and snapshots == beforeFutureSnapshots and #selected == beforeFutureSelections,
+    "new guide-only catalog row clipped its narrow selector preview or used live status")
+  selectExpedition("normal")
+  check(selected[#selected] == "hard:0" and shows("Huntmaster Draeven (Bloodbound)"),
+    "expedition selector lost the remembered Eclipse difficulty")
   harness.close = true
   frame()
   check(closed == 1 and not state.shown, "native window close did not retire the view")

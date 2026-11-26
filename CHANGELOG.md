@@ -1,5 +1,9 @@
 # Changes
 
+## 0.1.0-preview.19
+
+- Gather all expedition pages in one selector in Modern and Gamepad. The Encounter Library and Copium tracker keep direct shortcuts.
+
 ## 0.1.0-preview.18
 
 - Track live entry, replay, saved runs and roster eligibility for ToFS Group, ToFS Raid, the Broken Accord, and Firefell.

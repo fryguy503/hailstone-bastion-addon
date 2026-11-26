@@ -4,8 +4,17 @@ local Guide = dofile("lib/expedition_journal_catalog.lua")
 local Library = dofile("lib/expedition_journal_library.lua")
 local Featured = dofile("lib/expedition_journal_featured.lua")
 local M = {}
+local expeditions = {
+  {id = "normal", label = "Mistmoore Eclipse"},
+  {id = "vigil", label = "Midnight Vigil"},
+}
 local featuredById = {}
-for _, entry in ipairs(Featured) do featuredById[entry.id] = entry end
+for _, entry in ipairs(Featured) do
+  featuredById[entry.id] = entry
+  expeditions[#expeditions + 1] = entry
+end
+local expeditionById = {}
+for _, entry in ipairs(expeditions) do expeditionById[entry.id] = entry end
 
 local color = {
   bg = {.071, .075, .086, 1}, rail = {.090, .090, .102, 1},
@@ -588,7 +597,7 @@ local function featuredPage(view, info, snapshot, now, scale, journal)
     ui.Separator()
     heading("Current phase")
     rows("sleeper-phases", sleeperRows(snapshot, now))
-  else
+  elseif Model.liveMode(info.id) then
     tabs(view, snapshot, journal, now, scale, true)
     if view.tab == "roster" then
       rosterCard(snapshot, now, scale, info.id == "firefell" and chapterRoster(view, snapshot, scale) or nil, true)
@@ -639,12 +648,41 @@ local function header(view, window, journal, snapshot, detail, scale)
   ui.Dummy(width, 1)
 end
 
-local routes = {
-  {"Encounter Library", "library", "Library", 4, "GUIDES"},
-  {"Mistmoore Eclipse", "raidMode", "Eclipse", 1, "CASTLE MISTMOORE"},
-  {"Midnight Vigil", "vigil", "Vigil", 2},
-  {"Copium tracker", "copium", "Copium", 3, "REWARDS"},
+local shortcuts = {
+  {"Encounter Library", "Library", "library"},
+  {"Copium Tracker", "Copium", "copium"},
 }
+
+local function fitPreview(label, width)
+  if ui.CalcTextSize(label) <= width then return label end
+  local preview = "…"
+  if ui.CalcTextSize(preview) > width then return "" end
+  for offset in utf8.codes(label) do
+    local candidate = label:sub(1, offset - 1) .. "…"
+    if ui.CalcTextSize(candidate) > width then break end
+    preview = candidate
+  end
+  return preview
+end
+
+local function expeditionSelector(view, width, scale)
+  local selectedId = view.mode == "hard" and "normal" or view.mode
+  local current = expeditionById[selectedId]
+  -- Keep room for the combo arrow and padding even when a catalog label is long.
+  local preview = fitPreview(current and current.label or "Choose expedition", width - 40 * scale)
+  note("EXPEDITIONS", "muted")
+  ui.SetNextItemWidth(-1)
+  if ui.BeginCombo("##journal-expedition-selector", preview) then
+    for _, entry in ipairs(expeditions) do
+      local selected = entry.id == selectedId
+      if ui.Selectable(entry.label .. "##journal-expedition-" .. entry.id, selected) then
+        Model.navigate(view, entry.id == "normal" and view.raidMode or entry.id, true)
+      end
+      if selected then ui.SetItemDefaultFocus() end
+    end
+    ui.EndCombo()
+  end
+end
 
 local function navigation(view, vertical, scale)
   local width = ui.GetContentRegionAvail()
@@ -653,42 +691,17 @@ local function navigation(view, vertical, scale)
     local _, height = ui.GetContentRegionAvail()
     fill(x, y, width, height, color.rail)
   end
-  local minimum = buttonWidth("Library", 0, scale)
-  local columns = width >= 4 * minimum + 24 * scale and 4 or 2
-  local unit = vertical and width or math.max(1, (width - (columns - 1) * 8 * scale) / columns)
-  for index, route in ipairs(routes) do
-    if not vertical and (index - 1) % columns ~= 0 then ui.SameLine() end
-    if vertical and route[5] then
-      if index > 1 then ui.Dummy(0, 14 * scale) end
-      note(route[5], "muted")
-    end
-    local title = route[1]
-    if not vertical and unit < buttonWidth(title, 0, scale) then
-      title = route[3]
-    end
-    local mode = route[2] == "raidMode" and view.raidMode or route[2]
-    if button(title .. "##journal-route-" .. route[4], unit, 32 * scale, mode == view.mode) then
+  expeditionSelector(view, width, scale)
+  if vertical then ui.Dummy(0, 10 * scale) end
+  local half = (width - 8 * scale) / 2
+  local inline = not vertical and half >= math.max(buttonWidth("Library", 0, scale), buttonWidth("Copium", 0, scale))
+  local unit = inline and half or width
+  for index, shortcut in ipairs(shortcuts) do
+    if inline and index > 1 then ui.SameLine() end
+    local label = unit >= buttonWidth(shortcut[1], 0, scale) and shortcut[1] or shortcut[2]
+    local mode = shortcut[3]
+    if button(label .. "##journal-route-" .. mode, unit, 32 * scale, mode == view.mode) then
       Model.navigate(view, mode, true)
-    end
-  end
-  if vertical then
-    ui.Dummy(0, 14 * scale)
-    note("MORE EXPEDITIONS", "muted")
-    for _, entry in ipairs(Featured) do
-      if button(entry.label .. "##journal-featured-" .. entry.id, unit, 32 * scale, view.mode == entry.id) then
-        Model.navigate(view, entry.id, true)
-      end
-    end
-  else
-    local current = featuredById[view.mode]
-    ui.SetNextItemWidth(-1)
-    if ui.BeginCombo("##journal-featured", current and current.label or "More expeditions") then
-      for _, entry in ipairs(Featured) do
-        if ui.Selectable(entry.label .. "##journal-featured-" .. entry.id, view.mode == entry.id) then
-          Model.navigate(view, entry.id, true)
-        end
-      end
-      ui.EndCombo()
     end
   end
 end
@@ -704,9 +717,7 @@ function M.draw(view, window, journal, scale)
   fill(x, y, width, height, color.bg)
   local snapshot, detail = Model.poll(view, window, journal, now)
   header(view, window, journal, snapshot, detail, scale)
-  local railWidth = math.max(buttonWidth("Mistmoore Eclipse", 156, scale),
-    buttonWidth("Encounter Library", 156, scale)) + 26 * scale
-  for _, entry in ipairs(Featured) do railWidth = math.max(railWidth, buttonWidth(entry.label, 0, scale) + 26 * scale) end
+  local railWidth = buttonWidth("Encounter Library", 156, scale) + 26 * scale
   local vertical = width >= math.max(770 * scale, railWidth + 470 * scale)
   local modeBefore = view.mode
   if vertical then

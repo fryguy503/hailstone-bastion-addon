@@ -6,9 +6,10 @@ native UI. Select an encounter in Normal or Bloodbound Mistmoore Eclipse or
 Midnight Vigil to open its full guide. The Encounter Library provides
 searchable published guides, with zone and encounter-type filters.
 
-**More Expeditions** provides direct access to the Tower of Frozen Shadow
-group and raid expeditions, the Broken Accord, Firefell, and Sleeper's Tomb. Select
-the sidebar entry or use the **More expeditions** menu in a narrow window.
+Use the **Expedition** selector to switch between Mistmoore Eclipse, Midnight
+Vigil, the Tower of Frozen Shadow group and raid expeditions, the Broken
+Accord, Firefell, and Sleeper's Tomb. The Encounter Library and Copium tracker
+have their own shortcuts.
 Sleeper's Tomb shows the public 1.0 or 2.0 phase separately from the next
 Static Mode phase for your guild and the phase of an assigned active run.
 ToFS, Broken Accord, and Firefell show personal entry checks, current replay,
