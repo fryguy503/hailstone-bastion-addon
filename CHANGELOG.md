@@ -1,5 +1,13 @@
 # Changes
 
+## 0.1.0-preview.14
+
+- Add **Bastion → Tools → Equipment → Tradeskill Plans** and the `/tradeskillplans` shortcut.
+- Browse Bastion recipes by tradeskill or name. Preview a target quantity and save the plan to your linked Bastion account.
+- Check your bags, edit recipe choices and manual inventory, and pin your next steps while crafting. The website and game share checklist progress.
+- Import older browser saves from the website's **Saved Tradeskill Plans** page in the browser that holds them. The browser keeps its copy.
+- Keep pending edits locally until Bastion confirms the save. Changes made on another device prompt you to review the current plan.
+
 ## 0.1.0-preview.13
 
 - Add Expedition Journal to **Bastion → Tools → Raids & adventures**, with the `/expeditionjournal` shortcut.

@@ -17,6 +17,7 @@ local character={
 local equipment={
   {"Pet gear","petinventory","Inventory & equipment"},
   {"Gear ratings","gear_score","Items & augments"},
+  {"Tradeskill Plans","tradeskillplans","Browse recipes & track crafts"},
 }
 local adventures={
   {"Raid bars","raidbars","Layout & management"},

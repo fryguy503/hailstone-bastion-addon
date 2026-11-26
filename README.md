@@ -23,6 +23,7 @@ See [SDK compatibility](sdk/README.md).
 | Raid bars | Native Lua group cards or class grid, HP/class filters, class colors/roles, known resource bars, pets, targeting, explicit management, Delegate Raid Manager List/Grant/Revoke controls, edit/resize, scrolling and per-character settings. |
 | Raid Ready Check | Server-owned 45-second check with a separate response window and live counts by subgroup. Raid Bars show a status beside each player's HP. |
 | Expedition Journal | `/expeditionjournal` opens Mistmoore Eclipse, Bloodbound, Midnight Vigil and the Copium tracker. Personal access, replay timers, re-entry and leader roster checks use matching Bastion quest support. The guide is bundled for offline use. |
+| Tradeskill Plans | `/tradeskillplans` opens the recipe catalog and your linked Bastion account's saved plans. Create a plan, check materials against carried inventory, edit quantities and recipe choices, and pin the checklist while crafting. |
 | Faction standings | FAC1 categories, global search, numeric values/progress, retained selection, inspection and TSV export, including `/outputfile faction`. |
 | DZ manager | Saved expeditions, eligibility/expiry, explicit rejoin, and preserved delegate/server command paths. Rejoin does not teleport or renew an instance. |
 | Pet inventory and gear | Eighteen slots, native cursor equip/drop/removal, inspection, ownership/cooldown checks and controller-friendly reviewed actions. Server replies own the inventory. |
@@ -51,6 +52,7 @@ measured costs and remaining live acceptance limits.
 /bastion commands
 /raidbars
 /expeditionjournal
+/tradeskillplans
 /follow citadel on
 /follow distance 15
 /follow on
