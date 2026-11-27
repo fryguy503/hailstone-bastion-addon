@@ -3,9 +3,12 @@
 These MIT-licensed headers are based on Hailstone's public SDK. Preview 8 uses
 the ABI 3 table from client revision `5ffcaccafd2bb119875f4237b9124f58571e7813`
 and includes the optional bounded surface patch and regional surface reuse extensions.
+Preview 21 adds the optional `HailstoneItem.base_value_copper` field from Hailstone
+revision `0271904a5bb208e0bb8436e4d8bb8de8066f086c`. The item record's size determines
+whether the client supplies the field.
 
 `hailstone_plugin.h` SHA256
-`b2108fec021f678d9e32803e41bf8a8a690df466df109cd20b545e79f252116e` (LF line endings).
+`f7f09e9f1f7c8f60382a2172d613e29e04ccc974170993bb31c1ee7628b7c828` (LF line endings).
 
 The addon uses `HAILSTONE_PLUGIN` to export the public ABI 3 entry points. It uses
 `HAILSTONE_HOST_HAS` before calling optional host services. Raid observations come from

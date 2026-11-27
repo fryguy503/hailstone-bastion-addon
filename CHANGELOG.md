@@ -1,5 +1,10 @@
 # Changes
 
+## 0.1.0-preview.21
+
+- Show the first discoverer in Modern and Gamepad item details when Bastion supplies discovery information.
+- Show an item's base coin value in platinum, gold, silver and copper with Hailstone Bastion Preview 05 or a client that provides the item value field.
+
 ## 0.1.0-preview.20
 
 - Combine ToFS Group and Raid into one Tower of Frozen Shadow page with a mode switch.

@@ -51,6 +51,11 @@ int main() { try {
     InitializePlugin(); SetGameState(GAMESTATE_INGAME);
     const auto* hooks=hailstone_plugin_hooks();
     check(hooks && hooks->map_visible && hooks->map_policy && hooks->merchant_right_click,"missing extension hooks");
+    HailstoneItem priced_item{};
+    priced_item.size=sizeof(priced_item);
+    priced_item.id=10001;
+    priced_item.base_value_copper=12034;
+    check(!hooks->item_description_append(&priced_item),"item value activated outside Bastion");
     check(hooks->command_line("/twist 1 2")==nullptr && hooks->command_line("/fastcamp")==nullptr,
           "server-specific song or camp commands activated before announcement");
     check(hooks->command_line("/hcl")==nullptr,"corpse shortcut activated before a Bastion announcement");
@@ -98,6 +103,18 @@ int main() { try {
     check(hooks->map_policy(&policy)==1&&policy.flags==policy_flags,"zoning released the selected peer's stock-map restrictions");
     check(hooks->map_visible(&s,HAILSTONE_MAP_MARKER)==0&&hooks->map_visible(&s,HAILSTONE_MAP_FIND)==0,
           "zoning selected peer exposed a stale snapshot or another map provider");
+    const auto price_text=[&]() {
+        const auto* result=hooks->item_description_append(&priced_item);
+        return result ? std::string(result) : std::string();
+    };
+    check(price_text()=="Value: 12pp 3sp 4cp","item details did not format the template value");
+    priced_item.base_value_copper=4294967295u;
+    check(price_text()=="Value: 4294967pp 2gp 9sp 5cp","large item value overflowed");
+    priced_item.size=offsetof(HailstoneItem,base_value_copper);
+    check(price_text().empty(),"older host record was read past its end");
+    priced_item.size=sizeof(priced_item);
+    priced_item.base_value_copper=0;
+    check(price_text().empty(),"zero-value item added an empty price");
     SetGameState(GAMESTATE_INGAME);
     const auto player_getter=h.api.get_player;
     h.api.get_player=[](void*,HailstonePlayer*) -> int { throw std::runtime_error("Injected map observation failure"); };

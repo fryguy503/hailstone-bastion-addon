@@ -13,6 +13,7 @@
 #include "home_city_addon.h"
 #include "gear_score_addon.h"
 #include "kinbound.h"
+#include "item_discovery.h"
 #include "telegraphs_adapter.h"
 #include "firefell.h"
 #include "server_commands.h"
@@ -46,6 +47,7 @@ bastion::pet_inventory::Adapter pets;
 bastion::home_city::Adapter home;
 bastion::gear_score::Addon gear;
 bastion::KinboundCatalog kinbound;
+bastion::ItemDiscovery item_discovery;
 bastion::telegraphs::Adapter telegraphs;
 bastion::firefell::Adapter firefell;
 bastion::ServerCommands commands;
@@ -54,6 +56,40 @@ bastion::twist::Adapter twist;
 bastion::fast_camp::Adapter fast_camp;
 std::string description;
 std::string corpse_command;
+
+std::string item_value_text(const HailstoneItem* item) {
+    constexpr auto required = offsetof(HailstoneItem, base_value_copper) + sizeof(std::uint32_t);
+    if (!item || item->size < required || !item->id || !item->base_value_copper) return {};
+    struct Coin { std::uint32_t copper; const char* suffix; };
+    constexpr Coin coins[] = {{1000, "pp"}, {100, "gp"}, {10, "sp"}, {1, "cp"}};
+    auto remaining = item->base_value_copper;
+    std::string result = "Value:";
+    for (const auto& coin : coins) {
+        const auto count = remaining / coin.copper;
+        remaining %= coin.copper;
+        if (count) {
+            result += ' ';
+            result += std::to_string(count);
+            result += coin.suffix;
+        }
+    }
+    return result;
+}
+
+const char* describe_item(const HailstoneItem* item) {
+    description.clear();
+    const auto append = [](std::string_view text, std::string_view separator = "\n\n") {
+        if (text.empty()) return;
+        if (!description.empty()) description += separator;
+        description += text;
+    };
+    if (const auto* text = kinbound.item_description_append(item)) append(text);
+    if (const auto* text = gear.item_description_append(item)) append(text);
+    const auto* discoverer = item_discovery.item_description_append(item);
+    if (discoverer) append(discoverer);
+    append(item_value_text(item), discoverer ? "\n" : "\n\n");
+    return description.empty() ? nullptr : description.c_str();
+}
 
 template<class F> void guarded(F&& action) noexcept {
     bastion::services::guarded_ui(host,[&] { action(); return 1; });
@@ -80,6 +116,7 @@ void peer(bool value) {
     tradeskill_plans.peer(value);
     factions.peer(value); expeditions.peer(value); pets.peer(value);
     home.peer(value); gear.peer(value); telegraphs.peer(value); firefell.peer(value); commands.peer(value); integrity.peer(value); kinbound.clear();
+    item_discovery.peer(value);
 }
 std::string lower(std::string_view text) {
     std::string result(text);
@@ -105,6 +142,7 @@ void state(int value) {
     tradeskill_plans.game_state(value);
     factions.game_state(value); expeditions.game_state(value); pets.game_state(value);
     home.game_state(value); gear.game_state(value); telegraphs.game_state(value); firefell.game_state(value);
+    item_discovery.game_state(value);
     integrity.game_state(value); twist.game_state(value); fast_camp.game_state(value);
     if(value==GAMESTATE_CHARSELECT || value==GAMESTATE_PRECHARSELECT || value==GAMESTATE_UNLOADING) kinbound.clear();
 }
@@ -232,7 +270,8 @@ int packet(int stream,int direction,HailstonePacket* p) {
     if(!selected || stream!=HAILSTONE_STREAM_ZONE || direction!=HAILSTONE_IN) return 0;
     if(p->opcode==0x7d20) { kinbound.receive(p->data,p->size); return 1; }
     if(p->opcode==0x7d1f) { telegraphs.receive(p->data,p->size); return 1; }
-    return factions.packet(p->opcode,p->data,p->size) || expeditions.packet(p->opcode,p->data,p->size) ||
+    return item_discovery.packet(p->opcode,p->data,p->size) ||
+        factions.packet(p->opcode,p->data,p->size) || expeditions.packet(p->opcode,p->data,p->size) ||
         pets.packet(p->opcode,p->data,p->size) || home.packet(p->opcode,p->data,p->size) ||
         gear.packet(p->opcode,p->data,p->size) || firefell.packet(p->opcode,p->data,p->size) ||
         ready_check.packet(p->opcode,p->data,p->size) || journal.packet(p->opcode,p->data,p->size) ||
@@ -248,6 +287,7 @@ HAILSTONE_API void InitializePlugin(void) noexcept { guarded([] {
     hub.set_host(host); follow.set_host(host); raid.set_host(host); ready_check.set_host(host); journal.set_host(host);
     tradeskill_plans.set_host(host);
     factions.set_host(host); expeditions.set_host(host); pets.set_host(host);
+    item_discovery.set_host(host);
     home.set_host(host); gear.set_host(host); telegraphs.set_host(host); firefell.set_host(host); commands.set_host(host); integrity.set_host(host); twist.set_host(host); fast_camp.set_host(host);
     hub.initialize(open); follow.initialize(); raid.initialize(); ready_check.initialize(); journal.initialize(); factions.initialize(); expeditions.initialize(); pets.initialize();
     tradeskill_plans.initialize();
@@ -264,6 +304,7 @@ HAILSTONE_API void ShutdownPlugin(void) noexcept { guarded([] {
     hub.set_host(nullptr); follow.set_host(nullptr); raid.set_host(nullptr); ready_check.set_host(nullptr); journal.set_host(nullptr);
     tradeskill_plans.set_host(nullptr);
     factions.set_host(nullptr); expeditions.set_host(nullptr); pets.set_host(nullptr);
+    item_discovery.set_host(nullptr);
     home.set_host(nullptr); gear.set_host(nullptr); telegraphs.set_host(nullptr); firefell.set_host(nullptr); commands.set_host(nullptr); integrity.set_host(nullptr); twist.set_host(nullptr); fast_camp.set_host(nullptr);
 }); }
 HAILSTONE_API void SetGameState(int value) noexcept { guarded([&] { state(value); }); }
@@ -271,11 +312,13 @@ HAILSTONE_API void OnZoned(void) noexcept { guarded([] { state(GAMESTATE_INGAME)
 HAILSTONE_API void OnBeginZone(void) noexcept { guarded([] {
     hub.begin_zone(); follow.begin_zone(); raid.begin_zone(); ready_check.begin_zone(); journal.begin_zone(); factions.begin_zone(); expeditions.begin_zone(); pets.begin_zone();
     tradeskill_plans.begin_zone();
+    item_discovery.begin_zone();
     home.begin_zone(); gear.begin_zone(); telegraphs.begin_zone(); firefell.begin_zone(); twist.begin_zone(); fast_camp.begin_zone();
 }); }
 HAILSTONE_API void OnPulse(void) noexcept { guarded([] {
     hub.pulse(); follow.pulse(); raid.pulse(); ready_check.pulse(); journal.pulse(); factions.pulse(); expeditions.pulse(); pets.pulse();
     tradeskill_plans.pulse();
+    item_discovery.pulse();
     home.pulse(); gear.pulse(); telegraphs.pulse(); firefell.pulse(); integrity.pulse(); twist.pulse(); fast_camp.pulse();
 }); }
 HAILSTONE_API int OnIncomingChat(const char* line,std::uint32_t) noexcept {
@@ -298,9 +341,13 @@ HAILSTONE_API const HailstoneHooks* hailstone_plugin_hooks(void) {
         h.item_flags=[](const HailstoneItem* item,const char* flags)->const char* { const char* r=nullptr; if(selected) guarded([&] { r=kinbound.item_flags(item,flags); }); return r; };
         h.item_description_append=[](const HailstoneItem* item)->const char* {
             if(!selected) return nullptr;
-            const char* r=nullptr; guarded([&] { const auto* k=kinbound.item_description_append(item); description=k ? k : ""; if(const auto* g=gear.item_description_append(item)) { if(!description.empty()) description+="\n\n"; description+=g; } r=description.empty() ? nullptr : description.c_str(); }); return r;
+            const char* result=nullptr;
+            guarded([&] { result=describe_item(item); });
+            return result;
         };
-        h.item_presentation_revision=[] { return selected ? kinbound.revision()+gear.revision() : std::uint64_t{0}; };
+        h.item_presentation_revision=[] {
+            return selected ? kinbound.revision()+gear.revision()+item_discovery.revision() : std::uint64_t{0};
+        };
         h.loot_confirmation=[](const HailstoneItem* item,const uint32_t* ids,std::size_t count,int complete)->const char* { const char* r=nullptr; if(selected) guarded([&] { r=kinbound.loot_confirmation(item,ids,count,complete!=0); }); return r; };
         h.label=[](int id,const char*)->const char* { const char* r=nullptr; if(selected) guarded([&] { r=gear.label(id); }); return r; };
         h.world_frame=[](const HailstoneWorldFrame* frame) { guarded([&] { telegraphs.world_frame(frame); }); };

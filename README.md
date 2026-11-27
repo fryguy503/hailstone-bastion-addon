@@ -28,6 +28,7 @@ See [SDK compatibility](sdk/README.md).
 | DZ manager | Saved expeditions, eligibility/expiry, explicit rejoin, and preserved delegate/server command paths. Rejoin does not teleport or renew an instance. |
 | Pet inventory and gear | Eighteen slots, native cursor equip/drop/removal, inspection, ownership/cooldown checks and controller-friendly reviewed actions. Server replies own the inventory. |
 | Kinbound | Item labels, explanation, nested-item loot warnings and safe mixed Loot All confirmations. Sharing and attunement remain server decisions. |
+| Item details | First discoverer when Bastion has discovery information and base coin value when the client supplies it. Base value is per item, independent of the current merchant or Bazaar price. |
 | Gear ratings | Server-provided item/augment ratings, equipped and best-owned summaries, configuration-aware metadata and retry state. |
 | Home city | Authoritative selection grants and choices, explicit review, refresh and reminder handling. |
 | Encounter telegraphs | Ground-conforming shapes, coral/blue/gold/mint roles, mechanic glyphs, readable impact clocks and a high-contrast preset. Required footprints take priority and reuse verified terrain geometry while it is current. When a footprint cannot draw, both UI packs show an encounter alert with the action and time to impact. |
